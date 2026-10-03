@@ -857,6 +857,11 @@ elseif(CONFIG_BOARD_TYPE_HU_087)
     set(BOARD_DIR "hu-087")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_14_1)
     set(BUILTIN_ICON_FONT font_material_symbols_14_1)
+elseif(CONFIG_BOARD_TYPE_DOMINIC_ES3C28P_CYBERDECK)
+    set(BOARD_DIR "dominic-es3c28p-cyberdeck")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_16_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
 elseif(CONFIG_BOARD_TYPE_Freenove_ESP32S3_DISPLAY_2_8_LCD)
     set(BOARD_DIR "freenove-esp32s3-display-2.8-lcd")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
@@ -1111,6 +1116,7 @@ idf_component_register(SRCS ${SOURCES}
                         esp_pm
                         esp_psram
                         esp_netif
+                        esp_http_client
                         esp_eth
                         esp_driver_gpio
                         esp_driver_uart
