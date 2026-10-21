@@ -135,6 +135,7 @@ void CyberdeckDisplay::SetupUI() {
         },
         100, this);
     Settings touch_settings("cyberdeck");
+    dark_mode_ = touch_settings.GetInt("dark_mode", 0) != 0;
     std::unique_ptr<cJSON, decltype(&cJSON_Delete)> weather(
         cJSON_Parse(touch_settings.GetString(WEATHER_CACHE_KEY).c_str()), cJSON_Delete);
     auto cached_time = cJSON_GetObjectItemCaseSensitive(weather.get(), "time");
@@ -432,6 +433,9 @@ void CyberdeckDisplay::Open(Page page) {
         ~LayoutOnReturn() { display->LayoutBody(); }
     } layout{this};
     body_scaled_ = false;
+    if (brightness_panel_)
+        lv_obj_delete(brightness_panel_);
+    brightness_panel_ = brightness_label_ = brightness_slider_ = nullptr;
     if (page == Page::Voice || page == Page::WifiSetup || page == Page::Wifi) {
         Application::GetInstance().Schedule([]() { CyberdeckRadio::Instance().Stop(); });
     }
@@ -453,8 +457,11 @@ void CyberdeckDisplay::Open(Page page) {
     home_temperature_ = home_condition_ = home_weather_time_ = home_date_ = home_set_time_ =
         nullptr;
     home_buttons_.fill(nullptr);
-    lv_obj_set_style_bg_color(root_, lv_color_hex(page == Page::Home ? 0xf8f4e9 : 0x071510), 0);
-    lv_obj_set_style_text_color(root_, lv_color_hex(page == Page::Home ? 0x23433d : 0xcaf7df), 0);
+    theme_button_ = nullptr;
+    const auto colors = cyberdeck::HomeColors(page != Page::Home || dark_mode_);
+    lv_obj_set_style_bg_color(root_, lv_color_hex(colors.background), 0);
+    for (auto object : {root_, body_, wifi_status_, battery_status_})
+        lv_obj_set_style_text_color(object, lv_color_hex(colors.foreground), 0);
     const int header = page == Page::Home ? (width_ > 320 ? 40 : 28) : (width_ > 320 ? 60 : 45);
     lv_obj_set_pos(body_, 0, header);
     lv_obj_set_size(body_, width_, height_ - header);
@@ -499,12 +506,21 @@ void CyberdeckDisplay::Open(Page page) {
             lv_obj_set_user_data(button, reinterpret_cast<void*>(static_cast<intptr_t>(
                                              i == 9 ? Page::Radio : static_cast<Page>(i + 1))));
         }
-        Button(
-            body_, "Stop audio", 112, 144, 201, 42,
+        theme_button_ = Button(
+            body_, dark_mode_ ? "Light mode" : "Dark mode", 112, 144, 96, 42,
+            [](lv_event_t* event) {
+                auto self = static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event));
+                Application::GetInstance().Schedule([self]() { self->ToggleDarkMode(); });
+            },
+            this);
+        lv_obj_set_style_text_font(theme_button_, &font_noto_sans_basic_16_4, 0);
+        auto stop = Button(
+            body_, "Stop audio", 217, 144, 96, 42,
             [](lv_event_t*) {
                 Application::GetInstance().Schedule([]() { CyberdeckRadio::Instance().Stop(); });
             },
             this);
+        lv_obj_set_style_text_font(stop, &font_noto_sans_basic_16_4, 0);
         return;
     }
     if (page == Page::Radio) {
@@ -644,14 +660,7 @@ void CyberdeckDisplay::Open(Page page) {
         lv_obj_set_size(slider, 270, 12);
         lv_slider_set_range(slider, 10, 100);
         lv_slider_set_value(slider, brightness_, LV_ANIM_OFF);
-        lv_obj_add_event_cb(
-            slider,
-            [](lv_event_t* event) {
-                auto self = static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event));
-                self->brightness_ = lv_slider_get_value(lv_event_get_target_obj(event));
-                Board::GetInstance().GetBacklight()->SetBrightness(self->brightness_, true);
-            },
-            LV_EVENT_RELEASED, this);
+        lv_obj_add_event_cb(slider, BrightnessChanged, LV_EVENT_ALL, this);
         Button(
             body_, "Wi-Fi setup", 10, 125, 140, 45,
             [](lv_event_t* event) {
@@ -771,6 +780,99 @@ void CyberdeckDisplay::DisplayOff() {
     screen_off_ = true;
     Board::GetInstance().GetBacklight()->SetBrightness(0);
     ESP_LOGI("CyberdeckHome", "Display off; audio remains available");
+}
+
+void CyberdeckDisplay::BrightnessChanged(lv_event_t* event) {
+    const auto code = lv_event_get_code(event);
+    if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_RELEASED)
+        return;
+    auto self = static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event));
+    const int value =
+        std::clamp(static_cast<int>(lv_slider_get_value(lv_event_get_target_obj(event))), 10, 100);
+    self->brightness_ = value;
+    self->last_touch_ = lv_tick_get();
+    Board::GetInstance().GetBacklight()->SetBrightness(value);
+    if (self->brightness_label_)
+        lv_label_set_text_fmt(self->brightness_label_, "Brightness %d%%", value);
+    if (code == LV_EVENT_RELEASED) {
+        // Save separately: the backlight skips its permanent write if already at this level.
+        Application::GetInstance().Schedule([value]() {
+            nvs_handle_t storage = 0;
+            auto saved = nvs_open("display", NVS_READWRITE, &storage);
+            if (saved == ESP_OK) {
+                saved = nvs_set_i32(storage, "brightness", value);
+                if (saved == ESP_OK)
+                    saved = nvs_commit(storage);
+                nvs_close(storage);
+            }
+            if (saved == ESP_OK)
+                ESP_LOGI("CyberdeckHome", "Brightness saved: %d%%", value);
+            else
+                ESP_LOGE("CyberdeckHome", "Brightness save failed: %s", esp_err_to_name(saved));
+        });
+    }
+}
+
+void CyberdeckDisplay::ShowBrightness() {
+    if (brightness_panel_ || page_ != Page::Home)
+        return;
+    const auto colors = cyberdeck::HomeColors(dark_mode_);
+    brightness_panel_ = lv_obj_create(root_);
+    lv_obj_set_pos(brightness_panel_, 12, height_ - 128);
+    lv_obj_set_size(brightness_panel_, width_ - 24, 116);
+    lv_obj_set_style_pad_all(brightness_panel_, 0, 0);
+    lv_obj_set_style_bg_color(brightness_panel_, lv_color_hex(dark_mode_ ? 0x18342d : 0xfffcf4), 0);
+    lv_obj_set_style_bg_opa(brightness_panel_, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(brightness_panel_, lv_color_hex(colors.foreground), 0);
+    lv_obj_remove_flag(brightness_panel_, LV_OBJ_FLAG_SCROLLABLE);
+    brightness_label_ = lv_label_create(brightness_panel_);
+    lv_obj_set_pos(brightness_label_, 14, 14);
+    lv_obj_set_style_text_font(brightness_label_, &font_noto_sans_basic_16_4, 0);
+    lv_label_set_text_fmt(brightness_label_, "Brightness %d%%", brightness_);
+    Button(
+        brightness_panel_, "Done", width_ - 110, 6, 72, 36,
+        [](lv_event_t* event) {
+            auto self = static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event));
+            lv_obj_delete(self->brightness_panel_);
+            self->brightness_panel_ = self->brightness_label_ = self->brightness_slider_ = nullptr;
+        },
+        this);
+    brightness_slider_ = lv_slider_create(brightness_panel_);
+    lv_obj_set_pos(brightness_slider_, 24, 72);
+    lv_obj_set_size(brightness_slider_, width_ - 72, 16);
+    lv_obj_set_ext_click_area(brightness_slider_, 16);
+    lv_slider_set_range(brightness_slider_, 10, 100);
+    lv_slider_set_value(brightness_slider_, brightness_, LV_ANIM_OFF);
+    lv_obj_add_event_cb(brightness_slider_, BrightnessChanged, LV_EVENT_ALL, this);
+}
+
+bool CyberdeckDisplay::CheckBrightness(int percent) {
+    if (percent != -1 && (percent < 10 || percent > 100))
+        return false;
+    DisplayLockGuard lock(this);
+    if (!lock || startup_panel_)
+        return false;
+    if (!brightness_panel_) {
+        Home();
+        lv_obj_send_event(home_buttons_[3], LV_EVENT_CLICKED, nullptr);
+    }
+    if (percent >= 10) {
+        lv_slider_set_value(brightness_slider_, percent, LV_ANIM_OFF);
+        lv_obj_send_event(brightness_slider_, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_send_event(brightness_slider_, LV_EVENT_RELEASED, nullptr);
+    }
+    lv_obj_update_layout(brightness_panel_);
+    lv_area_t panel{}, slider{}, label{};
+    lv_obj_get_coords(brightness_panel_, &panel);
+    lv_obj_get_coords(brightness_slider_, &slider);
+    lv_obj_get_coords(brightness_label_, &label);
+    const bool fit = panel.x1 >= 0 && panel.x2 < width_ && panel.y1 >= 0 && panel.y2 < height_ &&
+                     slider.x1 > panel.x1 && slider.x2 < panel.x2 && label.y2 < slider.y1;
+    Settings settings("display");
+    ESP_LOGI("CyberdeckHome", "Brightness panel: value=%d; saved=%d; output=%u; layout=%s",
+             brightness_, settings.GetInt("brightness", 60),
+             Board::GetInstance().GetBacklight()->brightness(), fit ? "fit" : "clipped");
+    return fit;
 }
 
 void CyberdeckDisplay::ShowWeather() {
@@ -999,7 +1101,55 @@ void CyberdeckDisplay::UpdateStatus() {
     }
 }
 
+void CyberdeckDisplay::ToggleDarkMode() {
+    const bool next = !dark_mode_;
+    nvs_handle_t storage = 0;
+    auto saved = nvs_open("cyberdeck", NVS_READWRITE, &storage);
+    if (saved == ESP_OK) {
+        saved = nvs_set_i32(storage, "dark_mode", next);
+        if (saved == ESP_OK)
+            saved = nvs_commit(storage);
+        nvs_close(storage);
+    }
+    if (saved != ESP_OK) {
+        ESP_LOGE("CyberdeckHome", "Could not save display mode: %s; leaving current mode unchanged",
+                 esp_err_to_name(saved));
+        return;
+    }
+    DisplayLockGuard lock(this);
+    if (!lock)
+        return;
+    dark_mode_ = next;
+    Home();
+    ESP_LOGI("CyberdeckHome", "Display mode: %s; saved", dark_mode_ ? "dark" : "light");
+}
+
+bool CyberdeckDisplay::CheckThemeMenu(bool toggle) {
+    DisplayLockGuard lock(this);
+    if (!lock || startup_panel_)
+        return false;
+    screen_off_ = false;
+    last_touch_ = lv_tick_get();
+    Board::GetInstance().GetBacklight()->SetBrightness(brightness_);
+    Open(Page::Apps);
+    LayoutBody();
+    lv_obj_update_layout(body_);
+    auto label = lv_obj_get_child(theme_button_, 0);
+    lv_area_t button_area{}, label_area{};
+    lv_obj_get_coords(theme_button_, &button_area);
+    lv_obj_get_coords(label, &label_area);
+    const bool fit = button_area.y2 < height_ && label_area.x1 >= button_area.x1 &&
+                     label_area.x2 <= button_area.x2 && label_area.y1 >= button_area.y1 &&
+                     label_area.y2 <= button_area.y2;
+    ESP_LOGI("CyberdeckHome", "Theme menu: %s; layout=%s", lv_label_get_text(label),
+             fit ? "fit" : "clipped");
+    if (toggle && fit)
+        lv_obj_send_event(theme_button_, LV_EVENT_CLICKED, nullptr);
+    return fit;
+}
+
 void CyberdeckDisplay::ShowHome() {
+    const auto colors = cyberdeck::HomeColors(dark_mode_);
     lv_obj_remove_flag(body_, LV_OBJ_FLAG_SCROLLABLE);
     if (!pixels_)
         pixels_ = static_cast<uint16_t*>(
@@ -1014,6 +1164,7 @@ void CyberdeckDisplay::ShowHome() {
         lv_obj_set_pos(object, x, y);
         lv_obj_set_width(object, w);
         lv_obj_set_style_text_font(object, font, 0);
+        lv_obj_set_style_text_color(object, lv_color_hex(colors.foreground), 0);
         lv_obj_set_style_text_align(object, LV_TEXT_ALIGN_CENTER, 0);
         return object;
     };
@@ -1046,8 +1197,8 @@ void CyberdeckDisplay::ShowHome() {
             },
             LV_EVENT_CLICKED, this);
     }
-    const int button_width = large ? 64 : 52, gap = large ? 24 : 16;
-    const int first_x = (width_ - 3 * button_width - 2 * gap) / 2;
+    const int button_width = large ? 64 : 52, gap = large ? 20 : 12;
+    const int first_x = (width_ - 5 * button_width - 4 * gap) / 2;
     const int button_y = large ? 226 : 166, button_height = large ? 50 : 42;
     auto radio = home_buttons_[0] = Button(
         body_, MATERIAL_SYMBOLS_HEADPHONES, first_x, button_y, button_width, button_height,
@@ -1080,20 +1231,58 @@ void CyberdeckDisplay::ShowHome() {
         lv_obj_remove_flag(square, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_remove_flag(square, LV_OBJ_FLAG_SCROLLABLE);
     }
-    auto off = home_buttons_[2] = Button(
-        body_, MATERIAL_SYMBOLS_POWER_SETTINGS_NEW, first_x + 2 * (button_width + gap), button_y,
+    auto theme = home_buttons_[2] = Button(
+        body_, "", first_x + 2 * (button_width + gap), button_y, button_width, button_height,
+        [](lv_event_t* event) {
+            auto self = static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event));
+            Application::GetInstance().Schedule([self]() { self->ToggleDarkMode(); });
+        },
+        this);
+    lv_obj_set_style_bg_color(theme, lv_color_hex(colors.off_button), 0);
+    lv_obj_set_style_border_width(theme, 0, 0);
+    auto moon = lv_obj_create(theme);
+    lv_obj_remove_style_all(moon);
+    lv_obj_set_size(moon, 28, 28);
+    lv_obj_center(moon);
+    lv_obj_set_style_radius(moon, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(moon, lv_color_hex(colors.foreground), 0);
+    lv_obj_set_style_bg_opa(moon, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(moon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(moon, LV_OBJ_FLAG_SCROLLABLE);
+    auto cutout = lv_obj_create(moon);
+    lv_obj_remove_style_all(cutout);
+    lv_obj_set_size(cutout, 25, 25);
+    lv_obj_set_pos(cutout, 9, -4);
+    lv_obj_set_style_radius(cutout, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(cutout, lv_color_hex(colors.off_button), 0);
+    lv_obj_set_style_bg_opa(cutout, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(cutout, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(cutout, LV_OBJ_FLAG_SCROLLABLE);
+    auto brightness = home_buttons_[3] = Button(
+        body_, MATERIAL_SYMBOLS_BRIGHTNESS_6, first_x + 3 * (button_width + gap), button_y,
+        button_width, button_height,
+        [](lv_event_t* event) {
+            static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event))->ShowBrightness();
+        },
+        this);
+    lv_obj_set_style_bg_color(brightness, lv_color_hex(colors.off_button), 0);
+    lv_obj_set_style_border_width(brightness, 0, 0);
+    lv_obj_set_style_text_color(brightness, lv_color_hex(colors.foreground), 0);
+    lv_obj_set_style_text_font(brightness, &font_material_symbols_30_4, 0);
+    auto off = home_buttons_[4] = Button(
+        body_, MATERIAL_SYMBOLS_POWER_SETTINGS_NEW, first_x + 4 * (button_width + gap), button_y,
         button_width, button_height,
         [](lv_event_t* event) {
             static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event))->DisplayOff();
         },
         this);
-    lv_obj_set_style_bg_color(off, lv_color_hex(0xe1e6dc), 0);
+    lv_obj_set_style_bg_color(off, lv_color_hex(colors.off_button), 0);
     lv_obj_set_style_border_width(off, 0, 0);
-    lv_obj_set_style_text_color(off, lv_color_hex(0x23433d), 0);
+    lv_obj_set_style_text_color(off, lv_color_hex(colors.foreground), 0);
     lv_obj_set_style_text_font(off, &font_material_symbols_30_4, 0);
     UpdateHome();
     ESP_LOGI("CyberdeckHome",
-             "Home ready: analogue, " WEATHER_LOCATION ", Radio / Apps / display-off icons");
+             "Home ready: analogue, " WEATHER_LOCATION ", Radio / Apps / theme / brightness / off");
 }
 
 void CyberdeckDisplay::UpdateHome() {
@@ -1104,7 +1293,7 @@ void CyberdeckDisplay::UpdateHome() {
     const bool valid = timestamp >= 1700000000 && localtime_r(&timestamp, &local);
     if (canvas_) {
         cyberdeck::RenderHomeClock(pixels_, valid ? &local : nullptr, weather_code_, width_,
-                                   width_ > 320 ? 210 : 150);
+                                   width_ > 320 ? 210 : 150, dark_mode_);
         lv_obj_invalidate(canvas_);
     }
     if (valid)
@@ -1141,7 +1330,7 @@ void CyberdeckDisplay::UpdateHome() {
     lv_label_set_text(home_weather_time_, stamp.c_str());
 }
 
-bool CyberdeckDisplay::CheckHomeScreen(bool open) {
+bool CyberdeckDisplay::CheckHomeScreen(bool open, bool toggle_theme) {
     DisplayLockGuard lock(this);
     if (!lock || !root_ || startup_panel_)
         return false;
@@ -1152,7 +1341,8 @@ bool CyberdeckDisplay::CheckHomeScreen(bool open) {
         Open(Page::Home);
     }
     const bool ready = page_ == Page::Home && canvas_ && home_temperature_ && home_date_ &&
-                       home_buttons_[0] && home_buttons_[1] && home_buttons_[2] &&
+                       std::all_of(home_buttons_.begin(), home_buttons_.end(),
+                                   [](auto b) { return b != nullptr; }) &&
                        lv_obj_has_flag(header_home_, LV_OBJ_FLAG_HIDDEN);
     if (ready) {
         UpdateStatus();
@@ -1161,22 +1351,23 @@ bool CyberdeckDisplay::CheckHomeScreen(bool open) {
             cyberdeck::WeatherFresh(was_connected_, weather_fetched_,
                                     lv_tick_get() - weather_updated_, weather_time_, time(nullptr));
         lv_obj_update_layout(body_);
-        lv_area_t radio_area{}, apps_area{}, off_area{}, condition_area{}, temperature_area{},
-            date_area{};
+        lv_area_t radio_area{}, condition_area{}, temperature_area{}, date_area{};
         lv_obj_get_coords(home_buttons_[0], &radio_area);
-        lv_obj_get_coords(home_buttons_[1], &apps_area);
-        lv_obj_get_coords(home_buttons_[2], &off_area);
         lv_obj_get_coords(home_condition_, &condition_area);
         lv_obj_get_coords(home_temperature_, &temperature_area);
         lv_obj_get_coords(home_date_, &date_area);
         lv_font_glyph_dsc_t glyph{};
         const bool icons = lv_font_get_glyph_dsc(&font_material_symbols_30_4, &glyph, 0xf01f, 0) &&
-                           lv_font_get_glyph_dsc(&font_material_symbols_30_4, &glyph, 0xf8c7, 0);
-        const bool fit = icons && radio_area.x1 >= 0 && radio_area.y2 < height_ &&
-                         apps_area.y2 < height_ && off_area.y2 < height_ &&
-                         radio_area.x2 < apps_area.x1 && apps_area.x2 < off_area.x1 &&
-                         off_area.x2 < width_ && temperature_area.y2 < condition_area.y1 &&
-                         date_area.y2 < radio_area.y1;
+                           lv_font_get_glyph_dsc(&font_material_symbols_30_4, &glyph, 0xf8c7, 0) &&
+                           lv_font_get_glyph_dsc(&font_material_symbols_30_4, &glyph, 0xe3ab, 0);
+        bool fit = icons && temperature_area.y2 < condition_area.y1 && date_area.y2 < radio_area.y1;
+        int previous = -1;
+        for (auto button : home_buttons_) {
+            lv_area_t area{};
+            lv_obj_get_coords(button, &area);
+            fit &= area.x1 > previous && area.x2 < width_ && area.y1 >= 0 && area.y2 < height_;
+            previous = area.x2;
+        }
         ESP_LOGI("CyberdeckHome", "Home screen ready: clock=%s; weather=%s; wifi=%s; layout=%s",
                  time(nullptr) >= 1700000000 ? "set" : "unset",
                  !weather_time_ ? "none"
@@ -1184,13 +1375,24 @@ bool CyberdeckDisplay::CheckHomeScreen(bool open) {
                                 : "cached",
                  was_connected_ ? "connected" : "offline", fit ? "fit" : "overlap");
         ESP_LOGI("CyberdeckHome",
-                 "Home controls: headphones, app grid, display off; weather=" WEATHER_LOCATION);
+                 "Home controls: radio, apps, theme, brightness, off; weather=" WEATHER_LOCATION);
+        const auto colors = cyberdeck::HomeColors(dark_mode_);
+        const bool theme = lv_color_eq(lv_obj_get_style_bg_color(root_, LV_PART_MAIN),
+                                       lv_color_hex(colors.background)) &&
+                           lv_color_eq(lv_obj_get_style_text_color(home_temperature_, LV_PART_MAIN),
+                                       lv_color_hex(colors.foreground)) &&
+                           lv_color_eq(lv_obj_get_style_text_color(battery_status_, LV_PART_MAIN),
+                                       lv_color_hex(colors.foreground));
+        ESP_LOGI("CyberdeckHome", "Home theme: %s; colors=%s", dark_mode_ ? "dark" : "light",
+                 theme ? "match" : "wrong");
 #if CYBERDECK_LARGE_SCREEN
         extern int CyberdeckBatteryMillivolts();
         ESP_LOGI("CyberdeckHome", "Battery reading: %d mV; %s; display=%dx%d",
                  CyberdeckBatteryMillivolts(), lv_label_get_text(battery_status_), width_, height_);
 #endif
-        return fit;
+        if (toggle_theme && fit && theme)
+            lv_obj_send_event(home_buttons_[2], LV_EVENT_CLICKED, nullptr);
+        return fit && theme;
     }
     return ready;
 }

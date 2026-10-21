@@ -84,5 +84,26 @@ int main(int argc, char** argv) {
     ++time.tm_sec;
     RenderHomeClock(large.data() + 1, &time, 3, 480, 210);
     assert(large != before_large && large.front() == 0xdead && large.back() == 0xdead);
-    std::puts("PASS: five distinct faces, live seconds, time boundaries and unsynchronised state");
+    for (auto size : {std::pair{320, 150}, std::pair{480, 210}}) {
+        const int n = size.first * size.second;
+        std::vector<uint16_t> themed(n + 2, 0xdead);
+        auto image = themed.data() + 1;
+        RenderHomeClock(image, &time, 0, size.first, size.second, false);
+        const auto light = themed;
+        RenderHomeClock(image, &time, 0, size.first, size.second, true);
+        assert(themed != light && themed.front() == 0xdead && themed.back() == 0xdead);
+        assert(std::count(themed.begin(), themed.end(), 0xdead) == 2);
+        assert(std::count_if(image, image + n, [](uint16_t p) {
+                   return ((p >> 11) & 31) < 5 && ((p >> 5) & 63) < 10 && (p & 31) < 5;
+               }) > n / 2);
+        assert(std::count_if(image, image + n, [](uint16_t p) {
+                   return ((p >> 11) & 31) > 20 && ((p >> 5) & 63) > 40;
+               }) > 100);
+        RenderHomeClock(image, nullptr, -1, size.first, size.second, true);
+        assert(themed.front() == 0xdead && themed.back() == 0xdead);
+        RenderHomeClock(image, &time, 0, size.first, size.second, false);
+        assert(themed == light);  // Switching back restores the original light image exactly.
+    }
+    std::puts(
+        "PASS: five faces, live seconds, time boundaries, dark/light Home and guarded buffers");
 }

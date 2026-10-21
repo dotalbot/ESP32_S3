@@ -151,3 +151,9 @@ The user physically confirmed the calm Home looks good and both Radio and Apps b
 Weather now has a dedicated layout for both screen sizes, with current conditions, daily high/low, wind/humidity, update time and a small animated condition symbol. Current-only cache records remain readable; missing daily readings are shown as unavailable. Cached daily ranges show their forecast date after midnight or when the clock is unset. Home keeps its calm static weather presentation. Automatic weather/time work waits until the Wi-Fi manager has received an IP address, avoiding early DNS requests during startup.
 
 The original 2.8-inch build passes; new on-device Weather/radio/reconnection checks were performed on the larger FNK0104N, not on a reattached 2.8-inch board. See its board guide for exact evidence and remaining physical checks.
+
+### Dark / light Home mode
+
+Open the Apps grid and choose **Dark mode**. The Home dashboard and its analogue dial use a dark background with pale text; choose **Light mode** in the same menu to restore ivory. Wi-Fi, battery and weather text follow the selected Home colours. The choice is saved internally across restart and does not require an SD card. Radio and Stop audio remain available in the last Apps row. Other app pages already use dark backgrounds, and the five Clock-app faces keep their own artwork.
+
+Home now has five controls: Radio, Apps, direct dark/light toggle, brightness popup and display off. Drag the brightness slider for a live preview; release saves `display/brightness` internally, and Done closes the popup. The slider stays above 0% so brightness adjustment cannot make the display inaccessible. Home idle dimming and touch-to-wake continue to restore the selected level.

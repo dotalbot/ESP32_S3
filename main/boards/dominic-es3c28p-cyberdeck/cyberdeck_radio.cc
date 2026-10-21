@@ -1,4 +1,5 @@
 #include "cyberdeck_radio.h"
+#include <charconv>
 #include "application.h"
 #include "board.h"
 #include "cyberdeck_config.h"
@@ -82,6 +83,33 @@ void CyberdeckRadio::StartConsole() {
                                     Board::GetInstance().GetDisplay());
                                 if (!display->CheckHomeScreen(command == "home screen"))
                                     ESP_LOGE("CyberdeckHome", "Home screen missing");
+                            } else if (command == "home theme") {
+                                static_cast<CyberdeckDisplay*>(Board::GetInstance().GetDisplay())
+                                    ->CheckHomeScreen(true, true);
+                            } else if (command == "brightness menu" ||
+                                       command.compare(0, 11, "brightness ") == 0) {
+                                int value = -1;
+                                if (command != "brightness menu") {
+                                    const auto parsed =
+                                        std::from_chars(command.data() + 11,
+                                                        command.data() + command.size(), value);
+                                    if (parsed.ec != std::errc{} ||
+                                        parsed.ptr != command.data() + command.size() ||
+                                        value < 10 || value > 100) {
+                                        ESP_LOGW("CyberdeckHome", "Invalid brightness request");
+                                        return;
+                                    }
+                                }
+                                if (!static_cast<CyberdeckDisplay*>(
+                                         Board::GetInstance().GetDisplay())
+                                         ->CheckBrightness(value))
+                                    ESP_LOGE("CyberdeckHome",
+                                             "Brightness panel missing or clipped");
+                            } else if (command == "theme menu" || command == "theme toggle") {
+                                auto display = static_cast<CyberdeckDisplay*>(
+                                    Board::GetInstance().GetDisplay());
+                                if (!display->CheckThemeMenu(command == "theme toggle"))
+                                    ESP_LOGE("CyberdeckHome", "Theme menu missing or clipped");
                             } else if (command == "weather screen" || command == "weather status") {
                                 auto display = static_cast<CyberdeckDisplay*>(
                                     Board::GetInstance().GetDisplay());

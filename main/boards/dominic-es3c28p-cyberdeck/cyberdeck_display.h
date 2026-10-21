@@ -18,9 +18,11 @@ public:
     void ShowWifiSetup();
     void ShowStartupDuck();
     bool CheckRadioScreen(bool open);
-    bool CheckHomeScreen(bool open);
+    bool CheckHomeScreen(bool open, bool toggle_theme = false);
     bool CheckWeatherScreen(bool open);
     void DisplayOff();
+    bool CheckThemeMenu(bool toggle);
+    bool CheckBrightness(int percent = -1);
 
 private:
     enum class Page {
@@ -83,7 +85,15 @@ private:
     lv_obj_t* home_weather_time_ = nullptr;
     lv_obj_t* home_date_ = nullptr;
     lv_obj_t* home_set_time_ = nullptr;
-    std::array<lv_obj_t*, 3> home_buttons_{};
+    std::array<lv_obj_t*, 5> home_buttons_{};
+    lv_obj_t* theme_button_ = nullptr;
+    bool dark_mode_ = false;
+    void ToggleDarkMode();
+    void ShowBrightness();
+    static void BrightnessChanged(lv_event_t* event);
+    lv_obj_t* brightness_panel_ = nullptr;
+    lv_obj_t* brightness_label_ = nullptr;
+    lv_obj_t* brightness_slider_ = nullptr;
     std::array<lv_obj_t*, 5> time_rollers_{};
     void ShowHome();
     void UpdateHome();

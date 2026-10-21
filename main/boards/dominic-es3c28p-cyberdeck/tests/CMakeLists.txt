@@ -28,3 +28,6 @@ target_compile_features(weather_test PRIVATE cxx_std_17)
 target_include_directories(weather_test PRIVATE
     "${REPO_ROOT}/managed_components/espressif__cjson/cJSON")
 add_test(NAME weather COMMAND weather_test)
+add_executable(clock_test clock_test.cc ../cyberdeck_clock.cc)
+target_compile_features(clock_test PRIVATE cxx_std_17)
+add_test(NAME clock COMMAND clock_test)

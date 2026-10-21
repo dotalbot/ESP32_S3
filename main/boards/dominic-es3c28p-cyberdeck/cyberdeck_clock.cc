@@ -130,17 +130,19 @@ std::string NumberWord(int number) {
 
 const char* ClockStyleName(int style) { return kStyles[std::clamp(style, 0, kClockStyles - 1)]; }
 
-void RenderHomeClock(uint16_t* pixels, const std::tm* time, int weather_code, int width,
-                     int height) {
+void RenderHomeClock(uint16_t* pixels, const std::tm* time, int weather_code, int width, int height,
+                     bool dark) {
     if (!pixels || width <= 0 || height <= 0)
         return;
-    const auto paper = Color(0xf8f4e9), ink = Color(0x23433d), orange = Color(0xe99345);
+    const auto colors = HomeColors(dark);
+    const auto paper = Color(colors.background), ink = Color(colors.foreground),
+               orange = Color(0xe99345);
     std::fill_n(pixels, width * height, paper);
     Face face{pixels, width, height};
     const float factor = height / 150.0f;
     auto scale = [factor](int n) { return static_cast<int>(std::lround(n * factor)); };
     const int cx = scale(85), cy = scale(75), type = width > 320 ? 3 : 2;
-    face.Disc(cx, cy, scale(72), Color(0xd9d7c8));
+    face.Disc(cx, cy, scale(72), Color(colors.rim));
     face.Disc(cx, cy, scale(70), paper);
     for (int i = 0; i < 60; ++i) {
         auto start = face.Point(cx, cy, i * kPi / 30, scale(i % 5 ? 65 : 61));
