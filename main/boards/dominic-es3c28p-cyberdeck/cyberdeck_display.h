@@ -80,6 +80,7 @@ private:
     lv_obj_t* home_weather_time_ = nullptr;
     lv_obj_t* home_date_ = nullptr;
     lv_obj_t* home_set_time_ = nullptr;
+    std::array<lv_obj_t*, 3> home_buttons_{};
     std::array<lv_obj_t*, 5> time_rollers_{};
     void ShowHome();
     void UpdateHome();

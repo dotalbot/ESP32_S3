@@ -52,7 +52,9 @@
 #define SD_D1 GPIO_NUM_7
 #define SD_D2 GPIO_NUM_2
 #define SD_D3 GPIO_NUM_3
-#define WEATHER_LATITUDE "51.5074"
-#define WEATHER_LONGITUDE "-0.1278"
-#define WEATHER_LOCATION "London"
+#define WEATHER_LATITUDE "51.8892"
+#define WEATHER_LONGITUDE "0.9042"
+#define WEATHER_LOCATION "Colchester"
+// Keep another location's cached readings separate when changing this preset.
+#define WEATHER_CACHE_KEY "wx_colchester"
 #define CYBERDECK_TIMEZONE "GMT0BST,M3.5.0/1,M10.5.0"

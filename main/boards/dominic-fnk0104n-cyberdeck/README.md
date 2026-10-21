@@ -4,7 +4,9 @@ Board profile: **`dominic-fnk0104n-cyberdeck`**, ESP32-S3, 16 MB flash, 8 MB oct
 
 ## Interface
 
-The duck and chime lead into the ivory clock/weather Home screen. The larger screen has a larger analogue dial, readable weather/date text, visible Wi-Fi and estimated battery status, and larger Radio and Apps buttons. Other app controls use the extra width and height; Matrix, Life and the five clock faces scale to fit. Home and BOOT return to the dashboard. Settings retains touch calibration and brightness control.
+The duck and chime lead into the ivory clock/weather Home screen. The larger screen has a larger analogue dial, readable weather/date text, visible Wi-Fi and estimated battery status, and three compact icon buttons: **headphones = Radio, nine-square grid = Apps, power symbol = display off**. Display off only turns off the backlight; radio playback continues. A touch wakes the display without activating a control; release and tap again to use it. BOOT also returns to Home and restores brightness. Other app controls use the extra width and height; Matrix, Life and the five clock faces scale to fit. Settings retains touch calibration and brightness control.
+
+Weather is preset to **Colchester (51.8892, 0.9042)**, with London/UK timezone rules retained. Colchester is named beside the Home date. Its internal cache uses `cyberdeck/wx_colchester`, so the previous London `wx_cache` value cannot appear as Colchester weather. Without a Colchester reading it shows unavailable; after a successful fetch the existing dated offline cache applies. The original 2.8-inch profile retains its London preset and cache. Richer weather/high-low, animated weather and a duck reaction game are backlog items, not part of this update.
 
 The RGB status LED on GPIO40 uses the shared firmware indicators: slow blue flashing means Wi-Fi setup mode, rapid blue flashing means startup, and steady blue means connecting. It turns off in idle. To join a network, use Settings → Wi-Fi setup on the screen. Green is used during radio/chime playback; these indications do not measure battery charging.
 
@@ -65,3 +67,9 @@ ctest --test-dir /tmp/cyberdeck-touch-test --output-on-failure
 USB Home/Radio checks use `scripts/check_cyberdeck_radio.py --port /dev/cu.usbmodem1101 --home-only` or `--screen-only`. The checker waits for startup before opening diagnostic screens, because native USB attachment may restart the board. The radio screen check verifies controls/retention, not sound or network playback.
 
 Still needs physical confirmation on this board: keyboard, sound, live network apps, SD mounting/removal, battery-only operation/runtime and multimeter voltage comparison. Charging status cannot be determined from this board's available GPIO wiring.
+
+### Colchester and Home icon update — 21 October 2026
+
+The 3,363,120-byte application built and app-flashed onto the identified FNK0104N with hash verification, preserving NVS. The original 2.8-inch profile also built in its isolated regression directory. All 98 host tests and both native LVGL touch/partial-redraw regressions passed in the IDF environment. Formatting checks passed for changed C++ lines.
+
+The updated USB Home check verifies all three buttons fit, date text clears the controls, and the headphones/power glyphs exist in the linked font. It passed twice at 480 × 320 after a 2020 ms duck/chime, with Wi-Fi connected and the clock set. No old London weather appeared: Colchester initially showed unavailable. A host request using the new coordinates returned the expected current-weather fields. Dominic then confirmed **all three icons work, including display-off and touch-to-wake without opening an app**. These checks do not establish live on-device weather or battery calibration.

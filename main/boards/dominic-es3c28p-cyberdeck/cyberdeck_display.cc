@@ -1,4 +1,5 @@
 #include "cyberdeck_display.h"
+#include <material_symbols.h>
 #include <wifi_manager.h>
 #include "application.h"
 #include "board.h"
@@ -39,6 +40,8 @@
 LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
 LV_FONT_DECLARE(font_noto_sans_basic_30_4);
 LV_FONT_DECLARE(font_noto_sans_basic_16_4);
+LV_FONT_DECLARE(font_material_symbols_30_4);
+static_assert(sizeof(WEATHER_CACHE_KEY) <= NVS_KEY_NAME_MAX_SIZE);
 CyberdeckDisplay* CyberdeckDisplay::ble_owner_ = nullptr;
 
 lv_obj_t* CyberdeckDisplay::Button(lv_obj_t* parent, const char* label, int x, int y, int w, int h,
@@ -133,7 +136,7 @@ void CyberdeckDisplay::SetupUI() {
         100, this);
     Settings touch_settings("cyberdeck");
     std::unique_ptr<cJSON, decltype(&cJSON_Delete)> weather(
-        cJSON_Parse(touch_settings.GetString("wx_cache").c_str()), cJSON_Delete);
+        cJSON_Parse(touch_settings.GetString(WEATHER_CACHE_KEY).c_str()), cJSON_Delete);
     auto cached_time = cJSON_GetObjectItemCaseSensitive(weather.get(), "time");
     auto cached_temp = cJSON_GetObjectItemCaseSensitive(weather.get(), "temp");
     auto cached_code = cJSON_GetObjectItemCaseSensitive(weather.get(), "code");
@@ -434,6 +437,7 @@ void CyberdeckDisplay::Open(Page page) {
     clock_default_label_ = nullptr;
     home_temperature_ = home_condition_ = home_weather_time_ = home_date_ = home_set_time_ =
         nullptr;
+    home_buttons_.fill(nullptr);
     lv_obj_set_style_bg_color(root_, lv_color_hex(page == Page::Home ? 0xf8f4e9 : 0x071510), 0);
     lv_obj_set_style_text_color(root_, lv_color_hex(page == Page::Home ? 0x23433d : 0xcaf7df), 0);
     const int header = page == Page::Home ? (width_ > 320 ? 40 : 28) : (width_ > 320 ? 60 : 45);
@@ -893,8 +897,11 @@ void CyberdeckDisplay::ShowHome() {
             },
             LV_EVENT_CLICKED, this);
     }
-    auto radio = Button(
-        body_, "Radio", large ? 15 : 10, large ? 226 : 166, large ? 218 : 143, large ? 50 : 42,
+    const int button_width = large ? 64 : 52, gap = large ? 24 : 16;
+    const int first_x = (width_ - 3 * button_width - 2 * gap) / 2;
+    const int button_y = large ? 226 : 166, button_height = large ? 50 : 42;
+    auto radio = home_buttons_[0] = Button(
+        body_, MATERIAL_SYMBOLS_HEADPHONES, first_x, button_y, button_width, button_height,
         [](lv_event_t* event) {
             static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event))->Open(Page::Radio);
         },
@@ -902,8 +909,9 @@ void CyberdeckDisplay::ShowHome() {
     lv_obj_set_style_bg_color(radio, lv_color_hex(0xe99345), 0);
     lv_obj_set_style_border_width(radio, 0, 0);
     lv_obj_set_style_text_color(radio, lv_color_hex(0x23433d), 0);
-    auto apps = Button(
-        body_, "Apps", large ? 247 : 166, large ? 226 : 166, large ? 218 : 144, large ? 50 : 42,
+    lv_obj_set_style_text_font(radio, &font_material_symbols_30_4, 0);
+    auto apps = home_buttons_[1] = Button(
+        body_, "", first_x + button_width + gap, button_y, button_width, button_height,
         [](lv_event_t* event) {
             static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event))->Open(Page::Apps);
         },
@@ -911,8 +919,34 @@ void CyberdeckDisplay::ShowHome() {
     lv_obj_set_style_bg_color(apps, lv_color_hex(0x23433d), 0);
     lv_obj_set_style_border_width(apps, 0, 0);
     lv_obj_set_style_text_color(apps, lv_color_hex(0xffffff), 0);
+    // Native shapes give Apps a crisp grid without another icon font or bitmap.
+    for (int i = 0; i < 9; ++i) {
+        auto square = lv_obj_create(apps);
+        lv_obj_remove_style_all(square);
+        lv_obj_set_size(square, 6, 6);
+        lv_obj_align(square, LV_ALIGN_CENTER, (i % 3 - 1) * 10, (i / 3 - 1) * 10);
+        lv_obj_set_style_bg_color(square, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_bg_opa(square, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(square, 1, 0);
+        lv_obj_remove_flag(square, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_remove_flag(square, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    auto off = home_buttons_[2] = Button(
+        body_, MATERIAL_SYMBOLS_POWER_SETTINGS_NEW, first_x + 2 * (button_width + gap), button_y,
+        button_width, button_height,
+        [](lv_event_t* event) {
+            auto self = static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event));
+            self->screen_off_ = true;
+            Board::GetInstance().GetBacklight()->SetBrightness(0);
+        },
+        this);
+    lv_obj_set_style_bg_color(off, lv_color_hex(0xe1e6dc), 0);
+    lv_obj_set_style_border_width(off, 0, 0);
+    lv_obj_set_style_text_color(off, lv_color_hex(0x23433d), 0);
+    lv_obj_set_style_text_font(off, &font_material_symbols_30_4, 0);
     UpdateHome();
-    ESP_LOGI("CyberdeckHome", "Home ready: analogue, weather, Radio, Apps");
+    ESP_LOGI("CyberdeckHome",
+             "Home ready: analogue, " WEATHER_LOCATION ", Radio / Apps / display-off icons");
 }
 
 void CyberdeckDisplay::UpdateHome() {
@@ -935,7 +969,10 @@ void CyberdeckDisplay::UpdateHome() {
         strftime(date, sizeof(date), "%a %d %b", &local);
     else
         snprintf(date, sizeof(date), "Time not set");
-    lv_label_set_text(home_date_, date);
+    if (width_ > 320)
+        lv_label_set_text_fmt(home_date_, WEATHER_LOCATION " · %s", date);
+    else
+        lv_label_set_text(home_date_, date);
     if (!weather_time_) {
         lv_label_set_text(home_temperature_, "--");
         lv_label_set_text(home_condition_, "Weather unavailable");
@@ -968,6 +1005,7 @@ bool CyberdeckDisplay::CheckHomeScreen(bool open) {
         Open(Page::Home);
     }
     const bool ready = page_ == Page::Home && canvas_ && home_temperature_ && home_date_ &&
+                       home_buttons_[0] && home_buttons_[1] && home_buttons_[2] &&
                        lv_obj_has_flag(header_home_, LV_OBJ_FLAG_HIDDEN);
     if (ready) {
         UpdateStatus();
@@ -976,21 +1014,30 @@ bool CyberdeckDisplay::CheckHomeScreen(bool open) {
             cyberdeck::WeatherFresh(was_connected_, weather_fetched_,
                                     lv_tick_get() - weather_updated_, weather_time_, time(nullptr));
         lv_obj_update_layout(body_);
-        auto radio = lv_obj_get_child(body_, -2);
-        auto apps = lv_obj_get_child(body_, -1);
-        lv_area_t radio_area{}, apps_area{}, condition_area{}, temperature_area{};
-        lv_obj_get_coords(radio, &radio_area);
-        lv_obj_get_coords(apps, &apps_area);
+        lv_area_t radio_area{}, apps_area{}, off_area{}, condition_area{}, temperature_area{},
+            date_area{};
+        lv_obj_get_coords(home_buttons_[0], &radio_area);
+        lv_obj_get_coords(home_buttons_[1], &apps_area);
+        lv_obj_get_coords(home_buttons_[2], &off_area);
         lv_obj_get_coords(home_condition_, &condition_area);
         lv_obj_get_coords(home_temperature_, &temperature_area);
-        const bool fit = radio_area.y2 < height_ && apps_area.y2 < height_ &&
-                         radio_area.x2 < apps_area.x1 && temperature_area.y2 < condition_area.y1;
+        lv_obj_get_coords(home_date_, &date_area);
+        lv_font_glyph_dsc_t glyph{};
+        const bool icons = lv_font_get_glyph_dsc(&font_material_symbols_30_4, &glyph, 0xf01f, 0) &&
+                           lv_font_get_glyph_dsc(&font_material_symbols_30_4, &glyph, 0xf8c7, 0);
+        const bool fit = icons && radio_area.x1 >= 0 && radio_area.y2 < height_ &&
+                         apps_area.y2 < height_ && off_area.y2 < height_ &&
+                         radio_area.x2 < apps_area.x1 && apps_area.x2 < off_area.x1 &&
+                         off_area.x2 < width_ && temperature_area.y2 < condition_area.y1 &&
+                         date_area.y2 < radio_area.y1;
         ESP_LOGI("CyberdeckHome", "Home screen ready: clock=%s; weather=%s; wifi=%s; layout=%s",
                  time(nullptr) >= 1700000000 ? "set" : "unset",
                  !weather_time_ ? "none"
                  : fresh        ? "fresh"
                                 : "cached",
                  was_connected_ ? "connected" : "offline", fit ? "fit" : "overlap");
+        ESP_LOGI("CyberdeckHome",
+                 "Home controls: headphones, app grid, display off; weather=" WEATHER_LOCATION);
 #if CYBERDECK_LARGE_SCREEN
         extern int CyberdeckBatteryMillivolts();
         ESP_LOGI("CyberdeckHome", "Battery reading: %d mV; %s; display=%dx%d",
@@ -1673,7 +1720,7 @@ std::string CyberdeckDisplay::FetchDashboard(Page page) {
         nvs_handle_t storage = 0;
         esp_err_t saved = nvs_open("cyberdeck", NVS_READWRITE, &storage);
         if (saved == ESP_OK) {
-            saved = nvs_set_str(storage, "wx_cache", cache);
+            saved = nvs_set_str(storage, WEATHER_CACHE_KEY, cache);
             if (saved == ESP_OK)
                 saved = nvs_commit(storage);
             nvs_close(storage);
