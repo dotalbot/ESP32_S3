@@ -285,4 +285,58 @@ void RenderClock(uint16_t* pixels, int style, const std::tm* time) {
         face.Rect(18, 130, static_cast<int>(284 * seconds_progress), 2, Color(0x7ee5cd));
     }
 }
+void RenderWeatherIcon(uint16_t* pixels, int code, bool day, unsigned frame) {
+    if (!pixels)
+        return;
+    const auto background = Color(0x071510), cloud = Color(0xbacbd0);
+    std::fill_n(pixels, 96 * 96, background);
+    Face face{pixels, 96, 96};
+    if (code < 0) {
+        face.Disc(48, 45, 22, cloud);
+        face.Disc(48, 45, 19, background);
+        face.Line(38, 45, 58, 45, 3, cloud);
+        return;
+    }
+    if (code <= 2) {
+        if (day) {
+            for (int i = 0; i < 8; ++i) {
+                const float angle = i * kPi / 4 + (frame % 60) * kPi / 240;
+                const auto a = face.Point(46, 39, angle, 23);
+                const auto b = face.Point(46, 39, angle, 29);
+                face.Line(a.first, a.second, b.first, b.second, 2, Color(0xffbd50));
+            }
+            face.Disc(46, 39, 17, Color(0xffd878));
+        } else {
+            face.Disc(46, 39, 23, Color(0xd8e6ed));
+            face.Disc(55, 30, 20, background);
+            face.Disc(75, 22 + (frame / 6) % 2, 2, cloud);
+        }
+    }
+    const int drift = static_cast<int>(std::lround(2 * std::sin(frame * kPi / 30)));
+    if (code > 0) {
+        face.Disc(28 + drift, 49, 15, cloud);
+        face.Disc(47 + drift, 39, 20, cloud);
+        face.Disc(68 + drift, 50, 15, cloud);
+        face.Rect(28 + drift, 45, 40, 20, cloud);
+    }
+    if (code == 45 || code == 48) {
+        for (int y = 71; y <= 83; y += 6)
+            face.Line(20 + drift, y, 77 + drift, y, 2, cloud);
+    } else if (code >= 95) {
+        face.Line(51, 65, 41, 77, 4, Color(0xffd878));
+        face.Line(41, 77, 53, 77, 4, Color(0xffd878));
+        face.Line(53, 77, 44, 91, 4, Color(0xffd878));
+    } else if (code >= 51) {
+        const bool snow = (code >= 71 && code <= 77) || code == 85 || code == 86;
+        for (int i = 0; i < 3; ++i) {
+            const int x = 27 + i * 20, y = 69 + (frame + i * 7) % 18;
+            if (snow) {
+                face.Line(x - 3, y, x + 3, y, 1, cloud);
+                face.Line(x, y - 3, x, y + 3, 1, cloud);
+            } else {
+                face.Line(x, y, x - 3, y + 5, 2, Color(0x70c9f4));
+            }
+        }
+    }
+}
 }  // namespace cyberdeck

@@ -152,6 +152,20 @@ void CyberdeckDisplay::SetupUI() {
         weather_time_ = 0;
         weather_code_ = -1;
     }
+    if (weather_time_) {
+        weather_range_ =
+            cyberdeck::ReadWeatherRange(cJSON_GetObjectItemCaseSensitive(weather.get(), "hi"),
+                                        cJSON_GetObjectItemCaseSensitive(weather.get(), "lo"),
+                                        cJSON_GetObjectItemCaseSensitive(weather.get(), "day"));
+        auto humidity = cJSON_GetObjectItemCaseSensitive(weather.get(), "humidity");
+        auto wind = cJSON_GetObjectItemCaseSensitive(weather.get(), "wind");
+        auto day = cJSON_GetObjectItemCaseSensitive(weather.get(), "is_day");
+        if (cyberdeck::WeatherNumber(humidity, 0, 100))
+            weather_humidity_ = humidity->valueint;
+        if (cyberdeck::WeatherNumber(wind, 0, 500))
+            weather_wind_ = wind->valuedouble;
+        weather_day_ = !cyberdeck::WeatherNumber(day, 0, 1) || day->valueint != 0;
+    }
     Open(Page::Home);
     touch_swap_ = touch_settings.GetInt("touch_swap", TOUCH_SWAP_XY);
     touch_mirror_x_ = touch_settings.GetInt("touch_mx", TOUCH_MIRROR_X);
@@ -435,6 +449,7 @@ void CyberdeckDisplay::Open(Page page) {
     radio_status_ = nullptr;
     radio_volume_ = nullptr;
     clock_default_label_ = nullptr;
+    weather_readings_ = weather_range_label_ = weather_detail_label_ = weather_stamp_ = nullptr;
     home_temperature_ = home_condition_ = home_weather_time_ = home_date_ = home_set_time_ =
         nullptr;
     home_buttons_.fill(nullptr);
@@ -494,6 +509,11 @@ void CyberdeckDisplay::Open(Page page) {
     }
     if (page == Page::Radio) {
         ShowRadio();
+        return;
+    }
+    if (page == Page::Weather) {
+        ShowWeather();
+        StartWork(page);
         return;
     }
     if (page == Page::Clock) {
@@ -694,9 +714,7 @@ void CyberdeckDisplay::Open(Page page) {
         Button(
             body_, "Screen off", 165, 125, 140, 45,
             [](lv_event_t* event) {
-                auto self = static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event));
-                self->screen_off_ = true;
-                Board::GetInstance().GetBacklight()->SetBrightness(0);
+                static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event))->DisplayOff();
             },
             this);
         Button(
@@ -721,7 +739,7 @@ void CyberdeckDisplay::Open(Page page) {
 }
 
 void CyberdeckDisplay::LayoutBody() {
-    if (body_scaled_ || width_ <= 320 || !body_ || page_ == Page::Home)
+    if (body_scaled_ || width_ <= 320 || !body_ || page_ == Page::Home || page_ == Page::Weather)
         return;
     body_scaled_ = true;
     lv_obj_update_layout(body_);
@@ -746,12 +764,132 @@ void CyberdeckDisplay::LayoutBody() {
     }
 }
 
+void CyberdeckDisplay::DisplayOff() {
+    DisplayLockGuard lock(this);
+    if (!lock)
+        return;
+    screen_off_ = true;
+    Board::GetInstance().GetBacklight()->SetBrightness(0);
+    ESP_LOGI("CyberdeckHome", "Display off; audio remains available");
+}
+
+void CyberdeckDisplay::ShowWeather() {
+    const bool large = width_ > 320;
+    lv_obj_remove_flag(body_, LV_OBJ_FLAG_SCROLLABLE);
+    auto label = [&](int x, int y, int width, const lv_font_t* font) {
+        auto object = lv_label_create(body_);
+        lv_obj_set_pos(object, x, y);
+        lv_obj_set_width(object, width);
+        lv_obj_set_style_text_font(object, font, 0);
+        return object;
+    };
+    auto location = label(12, 8, width_ - 145, &BUILTIN_TEXT_FONT);
+    lv_label_set_text(location, WEATHER_LOCATION);
+    Button(
+        body_, "Refresh", width_ - 122, 0, 110, 38,
+        [](lv_event_t* event) {
+            static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event))->StartWork(Page::Weather);
+        },
+        this);
+    if (pixels_) {
+        canvas_ = lv_canvas_create(body_);
+        lv_obj_set_pos(canvas_, 12, large ? 50 : 44);
+        lv_canvas_set_buffer(canvas_, pixels_, 96, 96, LV_COLOR_FORMAT_RGB565);
+        cyberdeck::RenderWeatherIcon(pixels_, weather_code_, weather_day_, lv_tick_get() / 200);
+    }
+    const int x = large ? 140 : 120;
+    weather_readings_ = label(x, large ? 48 : 44, width_ - x - 12,
+                              large ? &font_noto_sans_basic_30_4 : &BUILTIN_TEXT_FONT);
+    weather_range_label_ = label(x, large ? 135 : 100, width_ - x - 12,
+                                 large ? &BUILTIN_TEXT_FONT : &font_noto_sans_basic_16_4);
+    weather_detail_label_ = label(12, large ? 195 : 148, width_ - 24,
+                                  large ? &BUILTIN_TEXT_FONT : &font_noto_sans_basic_16_4);
+    weather_stamp_ = label(12, large ? 232 : 175, width_ - 24,
+                           large ? &font_noto_sans_basic_16_4 : LV_FONT_DEFAULT);
+    UpdateWeather();
+}
+
+void CyberdeckDisplay::UpdateWeather() {
+    if (page_ != Page::Weather || !weather_readings_)
+        return;
+    if (!weather_time_) {
+        lv_label_set_text(weather_readings_, "-- C\nNo reading");
+        lv_label_set_text(weather_range_label_, "High / low unavailable");
+        lv_label_set_text(weather_detail_label_, "Connect Wi-Fi for weather");
+    } else {
+        lv_label_set_text_fmt(weather_readings_, "%.1f C\n%s", weather_temperature_ / 10.0,
+                              cyberdeck::WeatherName(weather_code_));
+        if (weather_range_) {
+            lv_label_set_text_fmt(
+                weather_range_label_, "%s\nHigh %.0f C   Low %.0f C",
+                cyberdeck::WeatherDayLabel(weather_range_->day, time(nullptr)).c_str(),
+                weather_range_->high, weather_range_->low);
+        } else {
+            lv_label_set_text(weather_range_label_, "High / low unavailable");
+        }
+        if (weather_humidity_ >= 0 && weather_wind_ >= 0)
+            lv_label_set_text_fmt(weather_detail_label_, "Wind %.0f km/h   Humidity %d%%",
+                                  weather_wind_, weather_humidity_);
+        else
+            lv_label_set_text(weather_detail_label_, "Wind / humidity unavailable");
+    }
+    char stamp[32] = "";
+    std::tm local{};
+    if (weather_time_ && localtime_r(&weather_time_, &local))
+        strftime(stamp, sizeof(stamp), "%d %b %H:%M", &local);
+    const bool fresh =
+        cyberdeck::WeatherFresh(was_connected_, weather_fetched_, lv_tick_get() - weather_updated_,
+                                weather_time_, time(nullptr));
+    std::string status = weather_message_;
+    if (status.empty())
+        status = weather_time_
+                     ? (fresh ? "Updated " : "Cached ") + std::string(stamp) + "  |  Open-Meteo"
+                     : "No saved weather. Tap Refresh.";
+    lv_label_set_text(weather_stamp_, status.c_str());
+}
+
+bool CyberdeckDisplay::CheckWeatherScreen(bool open) {
+    DisplayLockGuard lock(this);
+    if (!lock)
+        return false;
+    if (open) {
+        screen_off_ = false;
+        last_touch_ = lv_tick_get();
+        Board::GetInstance().GetBacklight()->SetBrightness(brightness_);
+        Open(Page::Weather);
+    }
+    if (page_ != Page::Weather || !weather_stamp_ || !canvas_)
+        return false;
+    UpdateWeather();
+    lv_obj_update_layout(body_);
+    bool fit = true;
+    int previous_bottom = 0;
+    for (auto label :
+         {weather_readings_, weather_range_label_, weather_detail_label_, weather_stamp_}) {
+        lv_area_t area{};
+        lv_obj_get_coords(label, &area);
+        fit &= area.x1 >= 0 && area.x2 < width_ && area.y2 < height_ && area.y1 > previous_bottom;
+        previous_bottom = area.y2;
+    }
+    const bool fresh =
+        cyberdeck::WeatherFresh(was_connected_, weather_fetched_, lv_tick_get() - weather_updated_,
+                                weather_time_, time(nullptr));
+    ESP_LOGI("CyberdeckHome",
+             "Weather screen: " WEATHER_LOCATION "; %s; range=%s; layout=%s; display=%s",
+             fresh           ? "fresh"
+             : weather_time_ ? "cached"
+                             : "none",
+             weather_range_ ? "available" : "unavailable", fit ? "fit" : "overflow",
+             screen_off_ ? "off" : "on");
+    return fit;
+}
+
 void CyberdeckDisplay::Tick() {
     const uint32_t now = lv_tick_get();
     if (now - last_status_ >= 1000) {
         last_status_ = now;
-        wifi_ap_record_t connected{};
-        const bool online = esp_wifi_sta_get_ap_info(&connected) == ESP_OK;
+        // Association can precede DHCP/DNS; the manager marks connected only after GOT_IP.
+        const bool online = WifiManager::GetInstance().IsConnected();
         if (online && !was_connected_) {
             weather_attempt_ = 0;
             weather_fetched_ = false;
@@ -769,6 +907,8 @@ void CyberdeckDisplay::Tick() {
         }
         if (page_ == Page::Home)
             UpdateHome();
+        else if (page_ == Page::Weather)
+            UpdateWeather();
     }
     if (!screen_off_ && now - last_touch_ >= 60000) {
         if (page_ == Page::Home)
@@ -780,6 +920,11 @@ void CyberdeckDisplay::Tick() {
     }
     if (screen_off_)
         return;
+    if (page_ == Page::Weather && canvas_ && now - last_frame_ >= 200) {
+        last_frame_ = now;
+        cyberdeck::RenderWeatherIcon(pixels_, weather_code_, weather_day_, now / 200);
+        lv_obj_invalidate(canvas_);
+    }
     if (page_ == Page::Radio && radio_status_) {
         lv_label_set_text(radio_status_, CyberdeckRadio::Instance().Status().c_str());
     }
@@ -935,9 +1080,7 @@ void CyberdeckDisplay::ShowHome() {
         body_, MATERIAL_SYMBOLS_POWER_SETTINGS_NEW, first_x + 2 * (button_width + gap), button_y,
         button_width, button_height,
         [](lv_event_t* event) {
-            auto self = static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event));
-            self->screen_off_ = true;
-            Board::GetInstance().GetBacklight()->SetBrightness(0);
+            static_cast<CyberdeckDisplay*>(lv_event_get_user_data(event))->DisplayOff();
         },
         this);
     lv_obj_set_style_bg_color(off, lv_color_hex(0xe1e6dc), 0);
@@ -1310,13 +1453,19 @@ void CyberdeckDisplay::ShowRadio() {
 
 void CyberdeckDisplay::StartWork(Page page) {
     if (busy_.exchange(true)) {
-        if (page != Page::Home)
+        if (page == Page::Weather) {
+            weather_message_ = "Busy. Refresh shortly.";
+            UpdateWeather();
+        } else if (page != Page::Home)
             SetText("Another request is finishing.\nTap Refresh shortly.");
         return;
     }
     if (page == Page::Home || page == Page::Weather)
         weather_fetched_ = false;
-    if (page != Page::Home)
+    if (page == Page::Weather) {
+        weather_message_ = "Refreshing...";
+        UpdateWeather();
+    } else if (page != Page::Home)
         SetText(page == Page::WifiSetup ? "Scanning..."
                 : page == Page::Wifi
                     ? "Scanning...\nWi-Fi pauses briefly and reconnects automatically."
@@ -1337,7 +1486,10 @@ void CyberdeckDisplay::StartWork(Page page) {
             "cyberdeck_worker", 8192, job, 3, nullptr) != pdPASS) {
         delete job;
         busy_ = false;
-        if (page != Page::Home)
+        if (page == Page::Weather) {
+            weather_message_ = "Not enough memory. Try again.";
+            UpdateWeather();
+        } else if (page != Page::Home)
             SetText("Not enough memory. Try again.");
     }
 }
@@ -1347,8 +1499,7 @@ void CyberdeckDisplay::RunWork(Page page, uint64_t request) {
         ScanJoinNetworks(request);
         return;
     }
-    wifi_ap_record_t connected = {};
-    if (esp_wifi_sta_get_ap_info(&connected) == ESP_OK && !time_sync_started_) {
+    if (WifiManager::GetInstance().IsConnected() && !time_sync_started_) {
         esp_sntp_config_t time_config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
         time_sync_started_ = esp_netif_sntp_init(&time_config) == ESP_OK;
         if (time_sync_started_)
@@ -1378,9 +1529,19 @@ void CyberdeckDisplay::Finish(Page page, uint64_t request, std::string result) {
         return;
     if (page == Page::Wifi)
         last_wifi_ = result;
+    if (page == Page::Home || page == Page::Weather) {
+        weather_message_ = result.empty()  ? ""
+                           : weather_time_ ? "Refresh failed; saved reading shown."
+                                           : "Refresh failed. Tap Refresh.";
+        if (!result.empty())
+            ESP_LOGW("CyberdeckHome", "Weather request failed: %s", result.c_str());
+        UpdateWeather();
+    }
     if (page_ == page && request_ == request) {
         if (page == Page::Home)
             UpdateHome();
+        else if (page == Page::Weather)
+            UpdateWeather();
         else if (page == Page::Clock)
             UpdateClock();
         else
@@ -1647,15 +1808,15 @@ std::string CyberdeckDisplay::ScanBle() {
 }
 
 std::string CyberdeckDisplay::FetchDashboard(Page page) {
-    wifi_ap_record_t connected = {};
-    if (esp_wifi_sta_get_ap_info(&connected) != ESP_OK)
+    if (!WifiManager::GetInstance().IsConnected())
         return "Internet needed.\nOpen Settings > Wi-Fi setup.";
     const char* url =
         page == Page::Weather || page == Page::Home
             ? "https://api.open-meteo.com/v1/forecast?latitude=" WEATHER_LATITUDE
               "&longitude=" WEATHER_LONGITUDE
-              "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timeformat="
-              "unixtime"
+              "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code,is_day"
+              "&daily=temperature_2m_max,temperature_2m_min&forecast_days=1"
+              "&timezone=Europe%2FLondon&timeformat=unixtime"
             : "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,dogecoin"
               "&vs_currencies=gbp&include_24hr_change=true";
     esp_http_client_config_t config = {};
@@ -1714,9 +1875,25 @@ std::string CyberdeckDisplay::FetchDashboard(Page page) {
         const int temp = static_cast<int>(std::lround(temperature->valuedouble * 10));
         const int condition = code->valueint;
         const time_t measured = static_cast<time_t>(stamp->valuedouble);
-        char cache[100];
-        snprintf(cache, sizeof(cache), "{\"time\":%lld,\"temp\":%d,\"code\":%d}",
-                 static_cast<long long>(measured), temp, condition);
+        auto daily = cJSON_GetObjectItemCaseSensitive(json.get(), "daily");
+        auto first = [daily](const char* key) {
+            auto array = cJSON_GetObjectItemCaseSensitive(daily, key);
+            return cJSON_IsArray(array) ? cJSON_GetArrayItem(array, 0) : nullptr;
+        };
+        const auto range = cyberdeck::ReadWeatherRange(first("temperature_2m_max"),
+                                                       first("temperature_2m_min"), first("time"));
+        auto is_day = cJSON_GetObjectItemCaseSensitive(current, "is_day");
+        const bool day = !cyberdeck::WeatherNumber(is_day, 0, 1) || is_day->valueint != 0;
+        const int rh = static_cast<int>(std::lround(humidity->valuedouble));
+        const double speed = wind->valuedouble;
+        char cache[256];
+        // Missing daily data must not discard a valid current reading or invent today's range.
+        snprintf(cache, sizeof(cache),
+                 "{\"time\":%lld,\"temp\":%d,\"code\":%d,\"humidity\":%d,\"wind\":%.1f,"
+                 "\"is_day\":%d,\"hi\":%.1f,\"lo\":%.1f,\"day\":%lld}",
+                 static_cast<long long>(measured), temp, condition, rh, speed, day,
+                 range ? range->high : 0, range ? range->low : 0,
+                 range ? static_cast<long long>(range->day) : 0);
         nvs_handle_t storage = 0;
         esp_err_t saved = nvs_open("cyberdeck", NVS_READWRITE, &storage);
         if (saved == ESP_OK) {
@@ -1729,24 +1906,27 @@ std::string CyberdeckDisplay::FetchDashboard(Page page) {
             ESP_LOGW("CyberdeckHome", "Weather cache save failed: %s; keeping RAM reading",
                      esp_err_to_name(saved));
         // A completed reading remains useful even if the user has left the weather screen.
-        Application::GetInstance().Schedule([this, temp, condition, measured]() {
-            DisplayLockGuard lock(this);
-            if (!lock)
-                return;
-            weather_temperature_ = temp;
-            weather_code_ = condition;
-            weather_time_ = measured;
-            weather_updated_ = weather_attempt_ = lv_tick_get();
-            weather_fetched_ = true;
-            UpdateHome();
-            ESP_LOGI("CyberdeckHome", "Weather ready: valid reading received");
-        });
-        char readings[150];
-        snprintf(readings, sizeof(readings),
-                 WEATHER_LOCATION "\n\nTemperature: %.1f C\nHumidity: %.0f%%\nWind: %.1f km/h",
-                 temperature->valuedouble, humidity->valuedouble, wind->valuedouble);
-        text = readings;
-        text += "\n\nWeather: Open-Meteo";
+        Application::GetInstance().Schedule(
+            [this, temp, condition, measured, range, rh, speed, day]() {
+                DisplayLockGuard lock(this);
+                if (!lock)
+                    return;
+                weather_temperature_ = temp;
+                weather_code_ = condition;
+                weather_time_ = measured;
+                weather_range_ = range;
+                weather_humidity_ = rh;
+                weather_wind_ = speed;
+                weather_day_ = day;
+                weather_message_.clear();
+                weather_updated_ = weather_attempt_ = lv_tick_get();
+                weather_fetched_ = true;
+                UpdateHome();
+                UpdateWeather();
+                ESP_LOGI("CyberdeckHome", "Weather ready: " WEATHER_LOCATION "; %.1f C; range=%s",
+                         temp / 10.0, range ? "available" : "unavailable");
+            });
+        return "";
     } else {
         const char* coins[] = {"bitcoin", "ethereum", "solana", "dogecoin"};
         text = "GBP / 24-hour change\n\n";

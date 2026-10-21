@@ -12,4 +12,6 @@ const char* ClockStyleName(int style);
 void RenderClock(uint16_t* pixels, int style, const std::tm* time);
 void RenderHomeClock(uint16_t* pixels, const std::tm* time, int weather_code,
                      int width = kClockWidth, int height = kClockHeight);
+// Fixed 96 x 96 RGB565 icon; only Weather animates, Home remains calm.
+void RenderWeatherIcon(uint16_t* pixels, int code, bool day, unsigned frame);
 }  // namespace cyberdeck

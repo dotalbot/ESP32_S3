@@ -9,7 +9,7 @@ A touchscreen launcher built into XiaoZhi, combining the five-app CYD idea with 
 | Wi-Fi | Passive 2.4GHz survey: name, channel, signal and security; up to 24 results | Briefly pauses saved-network connection, then reconnects automatically; wait if already connecting |
 | BLE | Active five-second scan: name, address and signal; merges scan responses; up to 24 results | No internet |
 | Clock | London time with UK daylight saving; automatic NTP sync online; manual date/time offline | Internet initially; runs locally afterwards |
-| Weather | London temperature, humidity and wind from Open-Meteo | Internet; manual refresh |
+| Weather | London current temperature/conditions, daily high/low, wind/humidity and gentle weather symbol | Internet for refresh; dated internal cache offline |
 | Crypto | Bitcoin, Ethereum, Solana and Dogecoin in GBP with 24-hour changes | Internet; manual refresh; public API limits apply |
 | Matrix | Green pixel-glyph falling-rain animation | Offline |
 | Life | Conway's Game of Life on a wrapping 32×18 grid; reopen to reseed | Offline |
@@ -145,3 +145,9 @@ Checks: compile/run the existing `tests/logic_test.cc` with C++17 and address/un
 Calm-home validation on 5 October 2026: both board host checks passed with address/undefined-behaviour sanitizers, including calendar/DST validation, weather freshness/offline states and Home renderer buffer boundaries. ESP-IDF 6.1 build passed; the 3,214,128-byte application has 22% app partition free and flashing was hash-verified on the original board MAC. The USB Home check passed actual widget fit and retention with clock unset / weather unavailable / Wi-Fi offline. Startup check passed duck completion at 2015 ms, chime completion and Home return with cloud activation deferred. A separate 35-second capture received 266 lines with no observed crash, no network-connected event and no cache-write failure. Thus live-weather caching/reboot recovery and reconnection were not physically verified this time; manual-picker touch usability and battery calibration also await physical confirmation.
 
 The user physically confirmed the calm Home looks good and both Radio and Apps buttons work on 5 October 2026.
+
+### Shared Weather update — 21 October 2026
+
+Weather now has a dedicated layout for both screen sizes, with current conditions, daily high/low, wind/humidity, update time and a small animated condition symbol. Current-only cache records remain readable; missing daily readings are shown as unavailable. Cached daily ranges show their forecast date after midnight or when the clock is unset. Home keeps its calm static weather presentation. Automatic weather/time work waits until the Wi-Fi manager has received an IP address, avoiding early DNS requests during startup.
+
+The original 2.8-inch build passes; new on-device Weather/radio/reconnection checks were performed on the larger FNK0104N, not on a reattached 2.8-inch board. See its board guide for exact evidence and remaining physical checks.

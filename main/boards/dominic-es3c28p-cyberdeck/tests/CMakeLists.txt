@@ -22,3 +22,9 @@ add_executable(display_flush_test display_flush_test.cc
 target_compile_features(display_flush_test PRIVATE cxx_std_17)
 target_link_libraries(display_flush_test PRIVATE lvgl)
 add_test(NAME display_flush COMMAND display_flush_test)
+add_executable(weather_test weather_test.cc ../cyberdeck_clock.cc
+    "${REPO_ROOT}/managed_components/espressif__cjson/cJSON/cJSON.c")
+target_compile_features(weather_test PRIVATE cxx_std_17)
+target_include_directories(weather_test PRIVATE
+    "${REPO_ROOT}/managed_components/espressif__cjson/cJSON")
+add_test(NAME weather COMMAND weather_test)

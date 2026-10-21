@@ -82,6 +82,19 @@ void CyberdeckRadio::StartConsole() {
                                     Board::GetInstance().GetDisplay());
                                 if (!display->CheckHomeScreen(command == "home screen"))
                                     ESP_LOGE("CyberdeckHome", "Home screen missing");
+                            } else if (command == "weather screen" || command == "weather status") {
+                                auto display = static_cast<CyberdeckDisplay*>(
+                                    Board::GetInstance().GetDisplay());
+                                if (!display->CheckWeatherScreen(command == "weather screen"))
+                                    ESP_LOGE("CyberdeckHome",
+                                             "Weather screen missing or overflowing");
+                            } else if (command == "display off") {
+                                static_cast<CyberdeckDisplay*>(Board::GetInstance().GetDisplay())
+                                    ->DisplayOff();
+                            } else if (command == "wifi reconnect") {
+                                const auto result = esp_wifi_disconnect();
+                                ESP_LOGI("CyberdeckHome", "Testing saved-network reconnect: %s",
+                                         esp_err_to_name(result));
                             } else if (command == "radio screen" ||
                                        command == "radio screen status") {
                                 auto display = static_cast<CyberdeckDisplay*>(

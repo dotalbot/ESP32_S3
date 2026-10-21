@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cyberdeck_logic.h"
+#include "cyberdeck_weather.h"
 #include "display/lcd_display.h"
 
 #include <driver/i2c_master.h>
@@ -18,6 +19,8 @@ public:
     void ShowStartupDuck();
     bool CheckRadioScreen(bool open);
     bool CheckHomeScreen(bool open);
+    bool CheckWeatherScreen(bool open);
+    void DisplayOff();
 
 private:
     enum class Page {
@@ -85,6 +88,17 @@ private:
     void ShowHome();
     void UpdateHome();
     void UpdateStatus();
+    void ShowWeather();
+    void UpdateWeather();
+    lv_obj_t* weather_readings_ = nullptr;
+    lv_obj_t* weather_range_label_ = nullptr;
+    lv_obj_t* weather_detail_label_ = nullptr;
+    lv_obj_t* weather_stamp_ = nullptr;
+    std::optional<cyberdeck::WeatherRange> weather_range_;
+    int weather_humidity_ = -1;
+    double weather_wind_ = -1;
+    bool weather_day_ = true;
+    std::string weather_message_;
     void ShowSetTime();
     int weather_temperature_ = 0;
     int weather_code_ = -1;
