@@ -87,7 +87,7 @@ void CyberdeckRadio::StartConsole() {
                                     Board::GetInstance().GetDisplay());
                                 if (!display->CheckWeatherScreen(command == "weather screen"))
                                     ESP_LOGE("CyberdeckHome",
-                                             "Weather screen missing or overflowing");
+                                             "Weather screen missing, overflowing or unreadable");
                             } else if (command == "display off") {
                                 static_cast<CyberdeckDisplay*>(Board::GetInstance().GetDisplay())
                                     ->DisplayOff();

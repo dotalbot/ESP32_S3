@@ -307,8 +307,9 @@ void RenderWeatherIcon(uint16_t* pixels, int code, bool day, unsigned frame) {
             }
             face.Disc(46, 39, 17, Color(0xffd878));
         } else {
-            face.Disc(46, 39, 23, Color(0xd8e6ed));
-            face.Disc(55, 30, 20, background);
+            const int bob = static_cast<int>(std::lround(4 * std::sin((frame % 24) * kPi / 12)));
+            face.Disc(46, 39 + bob, 23, Color(0xd8e6ed));
+            face.Disc(55, 30 + bob, 20, background);
             face.Disc(75, 22 + (frame / 6) % 2, 2, cloud);
         }
     }

@@ -58,6 +58,12 @@ int main() {
     const auto sun = buffer;
     RenderWeatherIcon(pixels, 0, false, 0);
     assert(buffer != sun);
+    const auto moon = buffer;
+    RenderWeatherIcon(pixels, 0, false, 7);
+    int changed = 0;
+    for (size_t i = 0; i < buffer.size(); ++i)
+        changed += buffer[i] != moon[i];
+    assert(changed > 100);  // The moon itself must move, not just a tiny star.
     std::puts(
         "PASS: forecast validation, offline dates across DST, weather icons and animation bounds");
 }

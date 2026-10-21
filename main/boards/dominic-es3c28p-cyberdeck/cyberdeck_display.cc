@@ -781,6 +781,8 @@ void CyberdeckDisplay::ShowWeather() {
         lv_obj_set_pos(object, x, y);
         lv_obj_set_width(object, width);
         lv_obj_set_style_text_font(object, font, 0);
+        // The default body's theme colour overrides inherited root text colour.
+        lv_obj_set_style_text_color(object, lv_color_hex(0xcaf7df), 0);
         return object;
     };
     auto location = label(12, 8, width_ - 145, &BUILTIN_TEXT_FONT);
@@ -862,7 +864,7 @@ bool CyberdeckDisplay::CheckWeatherScreen(bool open) {
         return false;
     UpdateWeather();
     lv_obj_update_layout(body_);
-    bool fit = true;
+    bool fit = true, readable = true;
     int previous_bottom = 0;
     for (auto label :
          {weather_readings_, weather_range_label_, weather_detail_label_, weather_stamp_}) {
@@ -870,18 +872,20 @@ bool CyberdeckDisplay::CheckWeatherScreen(bool open) {
         lv_obj_get_coords(label, &area);
         fit &= area.x1 >= 0 && area.x2 < width_ && area.y2 < height_ && area.y1 > previous_bottom;
         previous_bottom = area.y2;
+        readable &= lv_color_luminance(lv_obj_get_style_text_color(label, LV_PART_MAIN)) >= 180 &&
+                    lv_obj_get_style_text_opa(label, LV_PART_MAIN) >= LV_OPA_90;
     }
     const bool fresh =
         cyberdeck::WeatherFresh(was_connected_, weather_fetched_, lv_tick_get() - weather_updated_,
                                 weather_time_, time(nullptr));
     ESP_LOGI("CyberdeckHome",
-             "Weather screen: " WEATHER_LOCATION "; %s; range=%s; layout=%s; display=%s",
+             "Weather screen: " WEATHER_LOCATION "; %s; range=%s; layout=%s; display=%s; text=%s",
              fresh           ? "fresh"
              : weather_time_ ? "cached"
                              : "none",
              weather_range_ ? "available" : "unavailable", fit ? "fit" : "overflow",
-             screen_off_ ? "off" : "on");
-    return fit;
+             screen_off_ ? "off" : "on", readable ? "readable" : "dark");
+    return fit && readable;
 }
 
 void CyberdeckDisplay::Tick() {
