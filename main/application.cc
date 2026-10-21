@@ -167,6 +167,10 @@ void Application::Initialize() {
     });
 
     // Start network asynchronously
+    if (!board.AutoStartVoice()) {
+        SetDeviceState(kDeviceStateIdle);
+        ESP_LOGI(TAG, "Voice activation deferred until Talk.");
+    }
     board.StartNetwork();
 
     // Update the status bar immediately to show the network state
@@ -291,21 +295,11 @@ void Application::HandleNetworkConnectedEvent() {
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
-        // Network is ready, start activation
-        SetDeviceState(kDeviceStateActivating);
-        if (activation_task_handle_ != nullptr) {
-            ESP_LOGW(TAG, "Activation task already running");
-            return;
+        if (Board::GetInstance().AutoStartVoice()) {
+            StartActivation();
+        } else {
+            SetDeviceState(kDeviceStateIdle);
         }
-
-        xTaskCreate(
-            [](void* arg) {
-                Application* app = static_cast<Application*>(arg);
-                app->ActivationTask();
-                app->activation_task_handle_ = nullptr;
-                vTaskDelete(NULL);
-            },
-            "activation", 4096 * 2, this, 2, &activation_task_handle_);
     }
 
     // Update the status bar immediately to show the network state
@@ -359,6 +353,22 @@ void Application::HandleActivationDoneEvent() {
             // Play the success sound to indicate the device is ready
             audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
         });
+    }
+}
+
+void Application::StartActivation() {
+    if (activation_task_handle_ != nullptr || !SetDeviceState(kDeviceStateActivating))
+        return;
+    if (xTaskCreate(
+            [](void* arg) {
+                auto app = static_cast<Application*>(arg);
+                app->ActivationTask();
+                app->activation_task_handle_ = nullptr;
+                vTaskDelete(nullptr);
+            },
+            "activation", 8192, this, 2, &activation_task_handle_) != pdPASS) {
+        SetDeviceState(kDeviceStateIdle);
+        ESP_LOGE(TAG, "Cannot start voice activation task");
     }
 }
 
@@ -799,6 +809,10 @@ void Application::HandleToggleChatEvent() {
     }
 
     if (!protocol_) {
+        if (state == kDeviceStateIdle && !Board::GetInstance().AutoStartVoice()) {
+            StartActivation();
+            return;
+        }
         ESP_LOGE(TAG, "Protocol not initialized");
         return;
     }
@@ -1017,7 +1031,7 @@ void Application::HandleStateChangedEvent() {
                     "neutral");  // Then set emotion (wechat mode checks child count)
             }
             audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
+            audio_service_.EnableWakeWordDetection(board.AutoStartVoice() || protocol_ != nullptr);
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);

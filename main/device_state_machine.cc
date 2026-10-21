@@ -45,14 +45,14 @@ bool DeviceStateMachine::IsValidTransition(DeviceState from, DeviceState to) con
             return to == kDeviceStateStarting;
 
         case kDeviceStateStarting:
-            // Can go to wifi configuring or activating
-            return to == kDeviceStateWifiConfiguring ||
-                   to == kDeviceStateActivating;
+            // Multi-app boards may become idle without activating cloud voice.
+            return to == kDeviceStateWifiConfiguring || to == kDeviceStateActivating ||
+                   to == kDeviceStateIdle;
 
         case kDeviceStateWifiConfiguring:
-            // Can go to activating (after wifi connected) or audio testing
-            return to == kDeviceStateActivating ||
-                   to == kDeviceStateAudioTesting;
+            // Connected networks may activate cloud voice or return to local apps.
+            return to == kDeviceStateActivating || to == kDeviceStateAudioTesting ||
+                   to == kDeviceStateIdle;
 
         case kDeviceStateAudioTesting:
             // Can go back to wifi configuring

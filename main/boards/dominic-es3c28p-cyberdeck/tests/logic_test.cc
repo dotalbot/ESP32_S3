@@ -4,6 +4,65 @@
 
 int main() {
     using namespace cyberdeck;
+    assert(!BatteryPercent(0) && !BatteryPercent(2499) && !BatteryPercent(4401));
+    assert(BatteryPercent(2850) == 0 && BatteryPercent(3720) == 50 && BatteryPercent(4200) == 100);
+    int previous = 0;
+    for (int mv = 2500; mv <= 4400; ++mv) {
+        auto level = BatteryPercent(mv);
+        assert(level && *level >= previous && *level <= 100);
+        previous = *level;
+    }
+    const uint8_t active[] = {0x81, 0x3f, 0x01, 0xdf, 0, 0, 0};
+    assert((DecodeLargeTouch(active) == std::pair<int, int>{319, 479}));
+    const uint8_t released[7]{};
+    assert(!DecodeLargeTouch(released));
+    const uint8_t malformed[] = {0xbf, 0xff, 0x3f, 0xff, 0, 0, 0};
+    assert(!DecodeLargeTouch(malformed));
+    assert((MapTouch(319, 479, true, false, true, 480, 320) == std::pair<int, int>{479, 0}));
+    assert((MapTouch(320, 0, true, false, true, 480, 320) == std::pair<int, int>{-1, -1}));
+    for (bool swap : {false, true}) {
+        for (bool mx : {false, true}) {
+            for (bool my : {false, true}) {
+                auto points = CalibrationTargets(480, 320);
+                for (auto& point : points) {
+                    if (mx)
+                        point.first = 479 - point.first;
+                    if (my)
+                        point.second = 319 - point.second;
+                    if (swap)
+                        std::swap(point.first, point.second);
+                }
+                auto orientation = CalibrateTouch(points, 480, 320);
+                assert(orientation && orientation->swap == swap && orientation->mirror_x == mx &&
+                       orientation->mirror_y == my);
+            }
+        }
+    }
+    setenv("TZ", "GMT0BST,M3.5.0/1,M10.5.0", 1);
+    tzset();
+    assert(ManualTime(2024, 2, 29, 12, 0));
+    assert(!ManualTime(2026, 2, 29, 12, 0));
+    assert(!ManualTime(2026, 4, 31, 12, 0));
+    assert(!ManualTime(2026, 3, 29, 1, 30));  // Missing London hour at the spring change.
+    assert(ManualTime(2026, 10, 25, 1, 30));
+    assert(!ManualTime(2041, 1, 1, 0, 0));
+    const auto summer = *ManualTime(2026, 7, 1, 12, 0);
+    const auto winter = *ManualTime(2026, 1, 1, 12, 0);
+    std::tm utc{};
+    gmtime_r(&summer, &utc);
+    assert(utc.tm_hour == 11);
+    gmtime_r(&winter, &utc);
+    assert(utc.tm_hour == 12);
+    assert(WeatherName(0) == std::string("Clear"));
+    assert(WeatherName(65) == std::string("Rain"));
+    assert(WeatherName(99) == std::string("Storm"));
+    assert(!WeatherName(4) && !WeatherName(-1));
+    assert(WeatherFresh(true, true, 1000, summer, summer + 900));
+    assert(!WeatherFresh(false, true, 1000, summer, summer + 900));
+    assert(!WeatherFresh(true, false, 1000, summer, summer + 900));
+    assert(!WeatherFresh(true, true, 1800000, summer, summer + 900));
+    assert(!WeatherFresh(true, true, 1000, summer, summer + 1800));
+    assert(!WeatherFresh(true, true, 1000, summer, summer - 1));
     std::string name;
     bool complete = false;
     UpdateBleName(name, complete, "", false);

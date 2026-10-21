@@ -795,6 +795,31 @@ bool AudioService::IsPlaybackIdle() {
     return IsPlaybackDrainedLocked();
 }
 
+uint32_t AudioService::PlaybackGeneration() {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    return playback_generation_;
+}
+
+bool AudioService::PushPcmToPlaybackQueue(std::vector<int16_t>&& pcm, uint32_t generation) {
+    if (pcm.empty() || pcm.size() > static_cast<size_t>(codec_->output_sample_rate() / 5))
+        return false;  // Bound each write to 200 ms, including cancellation latency.
+    std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+    audio_queue_cv_.wait_for(lock, std::chrono::milliseconds(50), [this, generation]() {
+        return service_stopped_ || generation != playback_generation_ ||
+               audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE;
+    });
+    if (service_stopped_ || generation != playback_generation_ ||
+        audio_playback_queue_.size() >= MAX_PLAYBACK_TASKS_IN_QUEUE)
+        return false;
+    AudioTask task{};
+    task.type = kAudioTaskTypeDecodeToPlaybackQueue;
+    task.pcm = std::move(pcm);
+    audio_playback_queue_.push_back(std::move(task));
+    playback_drained_notified_ = false;
+    audio_queue_cv_.notify_all();
+    return true;
+}
+
 void AudioService::ResetDecoder() {
     bool notify_drained = false;
     {

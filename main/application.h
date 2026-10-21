@@ -175,6 +175,7 @@ private:
 
     // Activation task (runs in background)
     void ActivationTask();
+    void StartActivation();
 
     // Helper methods
     void CheckAssetsVersion();

@@ -862,6 +862,11 @@ elseif(CONFIG_BOARD_TYPE_DOMINIC_ES3C28P_CYBERDECK)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
     set(BUILTIN_ICON_FONT font_material_symbols_16_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+elseif(CONFIG_BOARD_TYPE_DOMINIC_FNK0104N_CYBERDECK)
+    set(BOARD_DIR "dominic-fnk0104n-cyberdeck")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
 elseif(CONFIG_BOARD_TYPE_Freenove_ESP32S3_DISPLAY_2_8_LCD)
     set(BOARD_DIR "freenove-esp32s3-display-2.8-lcd")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
@@ -923,6 +928,11 @@ file(GLOB BOARD_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/*.c
 )
 list(APPEND SOURCES ${BOARD_SOURCES})
+if(CONFIG_BOARD_TYPE_DOMINIC_FNK0104N_CYBERDECK)
+    file(GLOB CYBERDECK_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/boards/dominic-es3c28p-cyberdeck/*.cc")
+    list(APPEND SOURCES ${CYBERDECK_SOURCES})
+    list(APPEND INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/boards/dominic-es3c28p-cyberdeck")
+endif()
 
 # Select one audio engine for each chip family
 if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4 OR CONFIG_IDF_TARGET_ESP32S31)

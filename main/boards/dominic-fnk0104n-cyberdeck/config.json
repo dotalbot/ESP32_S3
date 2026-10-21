@@ -1,0 +1,23 @@
+{
+  "type": "dominic-fnk0104n-cyberdeck",
+  "target": "esp32s3",
+  "builds": [
+    {
+      "name": "dominic-fnk0104n-cyberdeck",
+      "sdkconfig_append": [
+        "CONFIG_BT_ENABLED=y",
+        "CONFIG_BT_NIMBLE_ENABLED=y",
+        "CONFIG_BT_NIMBLE_ROLE_CENTRAL=n",
+        "CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n",
+        "CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n",
+        "CONFIG_BT_NIMBLE_ROLE_OBSERVER=y",
+        "CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING=n",
+        "CONFIG_USE_EMOTE_MESSAGE_STYLE=n",
+        "CONFIG_USE_HOTSPOT_WIFI_PROVISIONING=n",
+        "CONFIG_LV_USE_KEYBOARD=y",
+        "CONFIG_SPIRAM_MEMTEST=y",
+        "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/v2/fnk0104n-16m.csv\""
+      ]
+    }
+  ]
+}

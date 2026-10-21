@@ -192,6 +192,10 @@ choice BOARD_TYPE
         bool "Dominic ES3C28P portable cyberdeck (2.8-inch touch)"
         depends on IDF_TARGET_ESP32S3
 
+    config BOARD_TYPE_DOMINIC_FNK0104N_CYBERDECK
+        bool "Dominic Freenove FNK0104N cyberdeck (3.5-inch touch)"
+        depends on IDF_TARGET_ESP32S3
+
     config BOARD_TYPE_DU_CHATX
         bool "Du ChatX Wi-Fi (嘟嘟开发板)"
         depends on IDF_TARGET_ESP32S3

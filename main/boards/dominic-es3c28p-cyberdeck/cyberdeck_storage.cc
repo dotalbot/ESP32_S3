@@ -18,6 +18,7 @@
 #include <freertos/task.h>
 #include <nvs.h>
 
+#include "cyberdeck_config.h"
 #include "settings.h"
 
 namespace {
@@ -122,17 +123,17 @@ void StorageTask(void*) {
     sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
     // LCDwiki ES3C28P SDIO wiring, separate from the display SPI bus.
     slot.width = 4;
-    slot.clk = GPIO_NUM_38;
-    slot.cmd = GPIO_NUM_40;
-    slot.d0 = GPIO_NUM_39;
-    slot.d1 = GPIO_NUM_41;
-    slot.d2 = GPIO_NUM_48;
-    slot.d3 = GPIO_NUM_47;
+    slot.clk = SD_CLK;
+    slot.cmd = SD_CMD;
+    slot.d0 = SD_D0;
+    slot.d1 = SD_D1;
+    slot.d2 = SD_D2;
+    slot.d3 = SD_D3;
     esp_vfs_fat_mount_config_t mount = {};
     {
         Settings settings("cyberdeck", true);
         // One-time authorisation for the inserted card, never reformat after a later failure.
-        mount.format_if_mount_failed = settings.GetBool("sd_init_format", true);
+        mount.format_if_mount_failed = settings.GetBool("sd_init_format", !CYBERDECK_LARGE_SCREEN);
         settings.SetBool("sd_init_format", false);
     }
     mount.max_files = 3;

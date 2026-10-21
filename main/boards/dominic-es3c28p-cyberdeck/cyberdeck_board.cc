@@ -3,18 +3,21 @@
 #include <esp_lcd_panel_vendor.h>
 
 #include <esp_wifi.h>
+#include <adc_battery_estimation.h>
 #include <ssid_manager.h>
 #include <wifi_manager.h>
 #include <wifi_station.h>
+#include <cmath>
 #include <mutex>
-#include "adc_battery_monitor.h"
 #include "application.h"
 #include "button.h"
 #include "codecs/es8311_audio_codec.h"
-#include "config.h"
+#include "cyberdeck_config.h"
 #include "cyberdeck_display.h"
+#include "cyberdeck_radio.h"
 #include "cyberdeck_storage.h"
 #include "mcp_server.h"
+#include "settings.h"
 #include "wifi_board.h"
 
 #include <driver/i2c_master.h>
@@ -33,15 +36,47 @@
 class DominicCyberdeck : public WifiBoard {
 private:
     std::mutex wifi_join_mutex_;
+    std::mutex battery_mutex_;
+    bool startup_sound_scheduled_ = false;
     Button boot_button_;
     CyberdeckDisplay* display_;
     i2c_master_bus_handle_t codec_i2c_bus_;
     i2c_master_dev_handle_t touch_ = nullptr;
-    AdcBatteryMonitor* adc_battery_monitor_;
+    adc_battery_estimation_handle_t battery_monitor_ = nullptr;
+#if CYBERDECK_LARGE_SCREEN
+    adc_oneshot_unit_handle_t battery_adc_ = nullptr;
+    adc_cali_handle_t battery_calibration_ = nullptr;
+    int battery_mv_ = 0;
+#endif
 
     void InitializeBatteryMonitor() {
-        adc_battery_monitor_ =
-            new AdcBatteryMonitor(ADC_UNIT_1, ADC_CHANNEL_8, 200000, 200000, GPIO_NUM_NC);
+#if CYBERDECK_LARGE_SCREEN
+        adc_oneshot_unit_init_cfg_t unit{};
+        unit.unit_id = ADC_UNIT_1;
+        if (adc_oneshot_new_unit(&unit, &battery_adc_) != ESP_OK)
+            return;
+        adc_oneshot_chan_cfg_t channel{};
+        channel.atten = ADC_ATTEN_DB_12;
+        channel.bitwidth = ADC_BITWIDTH_DEFAULT;
+        if (adc_oneshot_config_channel(battery_adc_, BATTERY_ADC_CHANNEL, &channel) != ESP_OK)
+            return;
+        adc_cali_curve_fitting_config_t calibration{};
+        calibration.unit_id = ADC_UNIT_1;
+        calibration.chan = BATTERY_ADC_CHANNEL;
+        calibration.atten = ADC_ATTEN_DB_12;
+        calibration.bitwidth = ADC_BITWIDTH_DEFAULT;
+        if (adc_cali_create_scheme_curve_fitting(&calibration, &battery_calibration_) != ESP_OK)
+            ESP_LOGW(TAG, "Battery ADC calibration unavailable");
+#else
+        adc_battery_estimation_t config{};
+        config.internal.adc_unit = ADC_UNIT_1;
+        config.internal.adc_bitwidth = ADC_BITWIDTH_DEFAULT;
+        config.internal.adc_atten = ADC_ATTEN_DB_12;
+        config.adc_channel = BATTERY_ADC_CHANNEL;
+        config.upper_resistor = BATTERY_DIVIDER_RESISTOR;
+        config.lower_resistor = BATTERY_DIVIDER_RESISTOR;
+        battery_monitor_ = adc_battery_estimation_create(&config);
+#endif
     }
 
     void InitializeTouch() {
@@ -50,16 +85,25 @@ private:
         reset.mode = GPIO_MODE_OUTPUT;
         ESP_ERROR_CHECK(gpio_config(&reset));
         ESP_ERROR_CHECK(gpio_set_level(TOUCH_RESET_PIN, 0));
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(CYBERDECK_LARGE_SCREEN ? 100 : 10));
         ESP_ERROR_CHECK(gpio_set_level(TOUCH_RESET_PIN, 1));
         // FT6336G needs this startup window before its first I2C transaction.
         vTaskDelay(pdMS_TO_TICKS(300));
         i2c_device_config_t device = {};
         device.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-        device.device_address = 0x38;
-        device.scl_speed_hz = 400000;
+        device.device_address = CYBERDECK_LARGE_SCREEN ? 0x55 : 0x38;
+        device.scl_speed_hz = CYBERDECK_LARGE_SCREEN ? 100000 : 400000;
         ESP_ERROR_CHECK(i2c_master_bus_add_device(codec_i2c_bus_, &device, &touch_));
-        display_->AttachTouch(touch_);
+        int points = 1;
+#if CYBERDECK_LARGE_SCREEN
+        const uint8_t reg[] = {0x00, 0x09};
+        uint8_t supported = 0;
+        if (i2c_master_transmit_receive(touch_, reg, 2, &supported, 1, 100) == ESP_OK)
+            points = std::clamp<int>(supported, 1, 10);
+#endif
+        display_->AttachTouch(touch_, points);
+        ESP_LOGI(TAG, "Touch controller ready: address=0x%02x points=%d", device.device_address,
+                 points);
     }
 
     void InitializeI2c() {
@@ -84,8 +128,8 @@ private:
         buscfg.mosi_io_num = DISPLAY_MOSI_PIN;
         buscfg.miso_io_num = DISPLAY_MIS0_PIN;
         buscfg.sclk_io_num = DISPLAY_SCK_PIN;
-        buscfg.quadwp_io_num = GPIO_NUM_NC;
-        buscfg.quadhd_io_num = GPIO_NUM_NC;
+        buscfg.quadwp_io_num = CYBERDECK_LARGE_SCREEN ? GPIO_NUM_14 : GPIO_NUM_NC;
+        buscfg.quadhd_io_num = CYBERDECK_LARGE_SCREEN ? GPIO_NUM_9 : GPIO_NUM_NC;
         buscfg.max_transfer_sz = DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(uint16_t);
         ESP_ERROR_CHECK(spi_bus_initialize(LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
     }
@@ -101,6 +145,10 @@ private:
     void InitializeLcdDisplay() {
         esp_lcd_panel_io_handle_t panel_io = nullptr;
         esp_lcd_panel_handle_t panel = nullptr;
+#if CYBERDECK_LARGE_SCREEN
+        extern void CyberdeckCreateLargePanel(esp_lcd_panel_io_handle_t*, esp_lcd_panel_handle_t*);
+        CyberdeckCreateLargePanel(&panel_io, &panel);
+#else
         // 液晶屏控制IO初始化
         ESP_LOGD(TAG, "Install panel IO");
         esp_lcd_panel_io_spi_config_t io_config = {};
@@ -127,15 +175,19 @@ private:
         esp_lcd_panel_invert_color(panel, DISPLAY_INVERT_COLOR);
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
+#endif
         display_ = new CyberdeckDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                         DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
-                                        DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+                                        DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY, CYBERDECK_LARGE_SCREEN);
     }
 
 public:
+    bool AutoStartVoice() const override { return false; }
+
     DominicCyberdeck() : boot_button_(BOOT_BUTTON_GPIO) {
         InitializeI2c();
         InitializeBatteryMonitor();
+        CyberdeckRadio::Instance().StartConsole();
         InitializeSpi();
         InitializeLcdDisplay();
         InitializeTouch();
@@ -146,6 +198,14 @@ public:
 
     void StartNetwork() override {
         std::lock_guard<std::mutex> lock(wifi_join_mutex_);
+        // Audio is initialized now; play once after initialization, including offline boots.
+        if (!startup_sound_scheduled_) {
+            startup_sound_scheduled_ = true;
+            Application::GetInstance().Schedule([this]() {
+                display_->ShowStartupDuck();
+                CyberdeckRadio::Instance().Start(CyberdeckRadio::kStartupSound);
+            });
+        }
         WifiBoard::StartNetwork();
         if (SsidManager::GetInstance().GetSsidList().empty()) {
             ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -245,14 +305,61 @@ public:
     }
 
     virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
-        charging = adc_battery_monitor_->IsCharging();
-        discharging = adc_battery_monitor_->IsDischarging();
-        level = adc_battery_monitor_->GetBatteryLevel();
+        std::lock_guard<std::mutex> lock(battery_mutex_);
+        // No charge-status input is wired; do not infer USB power or charging.
+        charging = discharging = false;
+        level = 0;
+        Settings settings("cyberdeck");
+        if (!settings.GetInt("battery_ready", BATTERY_FITTED_DEFAULT))
+            return false;
+#if CYBERDECK_LARGE_SCREEN
+        battery_mv_ = 0;
+        if (!battery_adc_ || !battery_calibration_)
+            return false;
+        int sum = 0;
+        for (int i = 0; i < 12; ++i) {
+            int raw = 0, millivolts = 0;
+            if (adc_oneshot_read(battery_adc_, BATTERY_ADC_CHANNEL, &raw) != ESP_OK ||
+                adc_cali_raw_to_voltage(battery_calibration_, raw, &millivolts) != ESP_OK)
+                return false;
+            sum += millivolts;
+        }
+        const int gain = std::clamp<int>(settings.GetInt("batt_gain", 1000), 900, 1100);
+        const int mv = static_cast<int>((static_cast<int64_t>(sum) * 2 * gain) / 12000);
+        auto estimate = cyberdeck::BatteryPercent(mv);
+        if (!estimate)
+            return false;
+        battery_mv_ = mv;
+        level = *estimate;
         return true;
+#else
+        if (!battery_monitor_)
+            return false;
+        float capacity = 0;
+        if (adc_battery_estimation_get_capacity(battery_monitor_, &capacity) != ESP_OK ||
+            !std::isfinite(capacity) || capacity < 0 || capacity > 100)
+            return false;
+        // ponytail: voltage-based estimate; validate divider/cell curve when battery is fitted.
+        level = static_cast<int>(std::lround(capacity));
+        return true;
+#endif
+    }
+
+    int BatteryMillivolts() {
+#if CYBERDECK_LARGE_SCREEN
+        std::lock_guard<std::mutex> lock(battery_mutex_);
+        return battery_mv_;
+#else
+        return 0;
+#endif
     }
 };
 
 DECLARE_BOARD(DominicCyberdeck);
+
+int CyberdeckBatteryMillivolts() {
+    return static_cast<DominicCyberdeck&>(Board::GetInstance()).BatteryMillivolts();
+}
 
 bool CyberdeckBeginWifiJoin() {
     return static_cast<DominicCyberdeck&>(Board::GetInstance()).BeginWifiJoin();

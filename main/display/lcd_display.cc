@@ -99,12 +99,14 @@ LcdDisplay::LcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_
 
 SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
                              int width, int height, int offset_x, int offset_y, bool mirror_x,
-                             bool mirror_y, bool swap_xy)
+                             bool mirror_y, bool swap_xy, bool software_rotate)
     : LcdDisplay(panel_io, panel, width, height) {
     // draw white
-    std::vector<uint16_t> buffer(width_, 0xFFFF);
-    for (int y = 0; y < height_; y++) {
-        esp_lcd_panel_draw_bitmap(panel_, 0, y, width_, y + 1, buffer.data());
+    const int physical_width = software_rotate ? height_ : width_;
+    const int physical_height = software_rotate ? width_ : height_;
+    std::vector<uint16_t> buffer(physical_width, 0xFFFF);
+    for (int y = 0; y < physical_height; y++) {
+        esp_lcd_panel_draw_bitmap(panel_, 0, y, physical_width, y + 1, buffer.data());
     }
 
     // Set the display to on
@@ -180,8 +182,8 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
         .buffer_size = static_cast<uint32_t>(width_ * 20),
         .double_buffer = false,
         .trans_size = 0,
-        .hres = static_cast<uint32_t>(width_),
-        .vres = static_cast<uint32_t>(height_),
+        .hres = static_cast<uint32_t>(physical_width),
+        .vres = static_cast<uint32_t>(physical_height),
         .monochrome = false,
         .rotation =
             {
@@ -194,7 +196,7 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
             {
                 .buff_dma = 1,
                 .buff_spiram = 0,
-                .sw_rotate = 0,
+                .sw_rotate = software_rotate,
                 .swap_bytes = 1,
                 .full_refresh = 0,
                 .direct_mode = 0,
@@ -205,6 +207,11 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     if (display_ == nullptr) {
         ESP_LOGE(TAG, "Failed to add display");
         return;
+    }
+
+    if (software_rotate) {
+        DisplayLockGuard lock(this);
+        lv_display_set_rotation(display_, LV_DISPLAY_ROTATION_90);
     }
 
     if (offset_x != 0 || offset_y != 0) {
